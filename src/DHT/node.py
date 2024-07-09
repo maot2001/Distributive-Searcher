@@ -1,6 +1,15 @@
+from chord import ChordNode, ChordNodeReference
 import threading
 import socket
-from chord import ChordNode, ChordNodeReference
+from typing import List
+
+import logging
+
+# Configurar el nivel de log
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s - %(levelname)s - %(threadName)s - %(message)s')
+
+logger = logging.getLogger(__name__)
 
 # Operation codes
 FIND_SUCCESSOR = 1
@@ -14,6 +23,7 @@ STORE_KEY = 8
 RETRIEVE_KEY = 9
 SEARCH = 10
 JOIN = 11
+
 
 class Node(ChordNode):    
     def __init__(self, ip: str, port: int = 8001, m: int = 160):
@@ -38,13 +48,15 @@ class Node(ChordNode):
                 
                 conn, addr = s.accept() #conexión y dirección del cliente respectivamente
                 
-                print(f'new connection from {addr}')
+                logger.debug(f'new connection from {addr}')
 
                 data = conn.recv(1024).decode().split(',') # Divide el string del mensaje por las ","
 
                 data_resp = None 
 
                 option = int(data[0])
+
+                logger.debug(f'ip {self.ip} recv {option}')
 
                 if option == FIND_SUCCESSOR:
                     id = int(data[1])
@@ -80,8 +92,9 @@ class Node(ChordNode):
                     key = data[1]
                     data_resp = self.data.get(key, '')
 
-                elif option == JOIN:
-                    data_resp = self.ref
+                elif option == JOIN and self.id == self.succ.id:
+                    ip = data[2]
+                    self.join(ChordNodeReference(ip, self.port))
 
                 
 

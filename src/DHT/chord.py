@@ -40,31 +40,33 @@ class ChordNodeReference:
     def _send_data(self, op: int, data: str = None) -> bytes:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                # logger.debug(f'_send_data: {self.ip}')
+                # logger.debug(f'_send_data: {self.ip}: {op}')
                 s.connect((self.ip, self.port))
                 s.sendall(f'{op},{data}'.encode('utf-8'))
                 # logger.debug(f'_send_data end: {self.ip}')
                 return s.recv(1024)
         except Exception as e:
-            print(f"Error sending data: {e}")
+            # logger.debug(f"Error sending data: {e}")
             return b''
         
     # Internal method to send data to all nodes
-    def _send_data_global(self, op: int, data: str = None) -> bytes:
+    def _send_data_global(self, op: int, data: str = None) -> list:
             # logger.debug(f'Broadcast: {self.ip}')
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             s.sendto(f'{op}, {data}'.encode(), (str(socket.INADDR_BROADCAST), PORT))
-            s.close()
             # logger.debug(f'Broadcast end: {self.ip}')
-        
+            response = s.recv(1024).decode().split(',')
+            s.close()
+            return response
         
     # Method to find a chord network node to conect
-    def join(self, ip) -> any:
+    def join(self, ip) -> list:
         # logger.debug(f'join start: {self.ip}')
-        self._send_data_global(JOIN, ip)
+        response = self._send_data_global(JOIN, ip)
         # # logger.debug(f'join msg : {ip} - {self.ip}')
         # logger.debug(f'join end: {self.ip}')
+        return response
 
     # Method to find the successor of a given id
     def find_successor(self, id: int) -> 'ChordNodeReference':
@@ -178,24 +180,27 @@ class ChordNode:
     # Method to join a Chord network without 'node' reference as an entry point      
     def join_CN(self):
         # logger.debug(f'join_CN: {self.ip}')
-        self.ref.join(self.ref)
+        # self.ref.join(self.ip)
+        msg = self.ref.join(self.ref)
+        # logger.debug(f'join_CN msg: {msg}')
+        return self.join(ChordNodeReference(msg[2], PORT))
 
     # Stabilize method to periodically verify and update the successor and predecessor
     def stabilize(self):
         while True:
             try:
                 if self.succ.id != self.id:
-                    print('stabilize')
+                    logger.debug('stabilize')
                     x = self.succ.pred
                     if x.id != self.id:
-                        print(x)
+                        logger.debug(x)
                         if x and self._inbetween(x.id, self.id, self.succ.id):
                             self.succ = x
                         self.succ.notify(self.ref)
             except Exception as e:
-                print(f"Error in stabilize: {e}")
+                logger.debug(f"Error in stabilize: {e}")
 
-            
+            logger.debug(f"successor : {self.succ} predecessor {self.pred}")
             time.sleep(10)
 
     # Notify method to inform the node about another node
@@ -214,7 +219,7 @@ class ChordNode:
                     self.next = 0
                 self.finger[self.next] = self.find_succ((self.id + 2 ** self.next) % 2 ** self.m)
             except Exception as e:
-                print(f"Error in fix_fingers: {e}")
+                logger.debug(f"Error in fix_fingers: {e}")
             time.sleep(10)
 
     # Check predecessor method to periodically verify if the predecessor is alive
@@ -243,40 +248,47 @@ class ChordNode:
     
     # Reciev boradcast message 
     def _reciev_broadcast(self):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.bind(('', int(PORT)))
         
         while True:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.bind(('', int(PORT)))
             msg, _ = s.recvfrom(1024)
+            # print(msg)
             
-            # logger.debug(f'Received broadcast: {self.ip}')
+            logger.debug(f'Received broadcast: my ip {self.ip}')
             
             msg = msg.decode().split(',')
             
             # logger.debug(f'recieved broadcast msg: {msg}')
             
             option = int(msg[0])
-            
-            # logger.debug(f'option broadcast msg: {option} - {self.ip}')
+
+            logger.debug(f'option broadcast msg: {option} - {self.ip}')
             # new_node_ip = str(msg[1])
             
             if option == JOIN:
                 # logger.debug(f'option broadcast msg: == JOIN - {self.ip}')
-            
-                #* msg[2] es el ip del nodo
+            #   # self.ref._send_data(JOIN, {self.ref})
+                # response = f'{self.id},{self.ip}'.encode()
+                # with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                #     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                #     s.bind((self.ip, self.port))
+                #     conn, addr = s.accept()
+                #     conn.sendall(response)
+                
+                # msg[2] es el ip del nodo
                 if msg[2] == self.ip:
-                    # logger.debug(f'My own broadcast msg: {self.id}')
-                    return
+                    logger.debug(f'My own broadcast msg: {self.id}')
                 else:
                     # self.ref._send_data(JOIN, {self.ref})
                     try:
                         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                            # logger.debug(f'_send_data: {self.ip}')
+                            logger.debug(f'_send_data: {self.ip}')
                             s.connect((msg[2], self.port))
                             s.sendall(f'{JOIN},{self.ref}'.encode('utf-8'))
-                            # logger.debug(f'_send_data end: {self.ip}')
-                            return s.recv(1024)
+                            logger.debug(f'_send_data end: {self.ip}')
                     except Exception as e:
-                        print(f"Error sending data: {e}")
-                        return b''
-                
+                        logger.debug(f"Error sending data: {e}")
+                #TODO Enviar respuesta
+
+            s.close()
