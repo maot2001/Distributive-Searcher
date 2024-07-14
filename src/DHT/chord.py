@@ -2,6 +2,7 @@ import socket
 import threading
 import time
 import hashlib
+
 import logging
 
 # Configurar el nivel de log
@@ -23,6 +24,7 @@ CLOSEST_PRECEDING_FINGER = 7
 STORE_KEY = 8
 RETRIEVE_KEY = 9
 JOIN = 11
+NOTIFY_PRED = 12
 
 # Function to hash a string using SHA-1 and return its integer representation
 def getShaRepr(data: str):
@@ -33,40 +35,45 @@ class ChordNodeReference:
     def __init__(self, ip: str, port: int = 8001):
         self.id = getShaRepr(ip)
         self.ip = ip
-        #self.port = port
         self.port = PORT
 
     # Internal method to send data to the referenced node
     def _send_data(self, op: int, data: str = None) -> bytes:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                # logger.debug(f'_send_data: {self.ip}: {op}')
+                logger.debug(f'_send_data: {self.ip}: {op}')
                 s.connect((self.ip, self.port))
                 s.sendall(f'{op},{data}'.encode('utf-8'))
-                # logger.debug(f'_send_data end: {self.ip}')
+                logger.debug(f'_send_data end: {self.ip}')
                 return s.recv(1024)
         except Exception as e:
-            # logger.debug(f"Error sending data: {e}")
+            logger.debug(f"Error sending data: {e}")
             return b''
         
     # Internal method to send data to all nodes
     def _send_data_global(self, op: int, data: str = None) -> list:
-            # logger.debug(f'Broadcast: {self.ip}')
+        try:
+            logger.debug(f'Broadcast: {self.ip}')
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             s.sendto(f'{op}, {data}'.encode(), (str(socket.INADDR_BROADCAST), PORT))
-            # logger.debug(f'Broadcast end: {self.ip}')
+            logger.debug(f'Broadcast end: {self.ip}')
             response = s.recv(1024).decode().split(',')
             s.close()
             return response
-        
+        except Exception as e:
+            logger.debug(f"Error sending Broadcast: {e}")
+            return b''
+               
     # Method to find a chord network node to conect
     def join(self, ip) -> list:
-        # logger.debug(f'join start: {self.ip}')
+        logger.debug(f'join start: {self.ip}')
+        # response = self._send_data_global(JOIN, str(id)).decode().split(',')
         response = self._send_data_global(JOIN, ip)
         # # logger.debug(f'join msg : {ip} - {self.ip}')
-        # logger.debug(f'join end: {self.ip}')
+        logger.debug(f'join end: {self.ip}')
         return response
+        # return ChordNodeReference(response[1], self.port)
 
     # Method to find the successor of a given id
     def find_successor(self, id: int) -> 'ChordNodeReference':
@@ -93,6 +100,9 @@ class ChordNodeReference:
     # Method to notify the current node about another node
     def notify(self, node: 'ChordNodeReference'):
         self._send_data(NOTIFY, f'{node.id},{node.ip}')
+
+    def notify_pred(self, id: int, ip: str) -> 'ChordNodeReference':
+        self._send_data(NOTIFY_PRED, f'{str(id)},{ip}')
 
     # Method to check if the predecessor is alive
     def check_predecessor(self):
@@ -124,7 +134,6 @@ class ChordNode:
     def __init__(self, ip: str, port: int = 8001, m: int = 160):
         self.id = getShaRepr(ip)
         self.ip = ip
-        # self.port = port
         self.port = PORT
         self.ref = ChordNodeReference(self.ip, self.port)
         self.succ = self.ref  # Initial successor is itself
@@ -164,7 +173,8 @@ class ChordNode:
     def closest_preceding_finger(self, id: int) -> 'ChordNodeReference':
         for i in range(self.m - 1, -1, -1):
             if self.finger[i] and self._inbetween(self.finger[i].id, self.id, id):
-                return self.finger[i]
+                return self.finger[i].closest_preceding_finger(id)
+        
         return self.ref
 
     # Method to join a Chord network using 'node' as an entry point
@@ -179,10 +189,10 @@ class ChordNode:
       
     # Method to join a Chord network without 'node' reference as an entry point      
     def join_CN(self):
-        # logger.debug(f'join_CN: {self.ip}')
+        logger.debug(f'join_CN: {self.ip}')
         # self.ref.join(self.ip)
         msg = self.ref.join(self.ref)
-        # logger.debug(f'join_CN msg: {msg}')
+        logger.debug(f'join_CN msg: {msg}')
         return self.join(ChordNodeReference(msg[2], PORT))
 
     # Stabilize method to periodically verify and update the successor and predecessor
@@ -205,21 +215,48 @@ class ChordNode:
 
     # Notify method to inform the node about another node
     def notify(self, node: 'ChordNodeReference'):
+        logger.debug(f'in notify, my id: {self.id} my pred: {node.id}')
         if node.id == self.id:
             pass
-        if not self.pred or self._inbetween(node.id, self.pred.id, self.id):
+        elif not self.pred:
             self.pred = node
+            if self.id == self.succ.id:
+                self.succ = node
+                self.succ.notify(self.ref)
+        elif self._inbetween(node.id, self.pred.id, self.id):
+            self.pred.notify_pred(node.id, node.ip)
+            self.pred = node
+
+    def notify_pred(self, node: 'ChordNodeReference'):
+        logger.debug(f'in notify pred, my id: {self.id} my succ: {node.id}')
+        if node.id == self.id:
+            pass
+        elif self._inbetween(node.id, self.pred.id, self.id):
+            self.succ = node
+            self.succ.notify(self.id)
 
     # Fix fingers method to periodically update the finger table
     def fix_fingers(self):
         while True:
-            try:
-                self.next += 1
-                if self.next >= self.m:
-                    self.next = 0
-                self.finger[self.next] = self.find_succ((self.id + 2 ** self.next) % 2 ** self.m)
-            except Exception as e:
-                logger.debug(f"Error in fix_fingers: {e}")
+            to_write = ''
+            for i in range(self.m):
+                # Calcular el próximo índice de dedo
+                next_index = (self.id + 2**i) % 2**self.m
+                if self.succ.id == self.id:
+                    self.finger[i] = self.ref
+                else:
+                    if self._inbetween(next_index, self.id, self.succ.id):
+                        self.finger[i] = self.succ
+                    else:
+                        node = self.succ.closest_preceding_finger(next_index)
+                        if node.id != next_index:
+                            node = node.succ
+                        self.finger[i] = node
+                
+                if i == 0 or self.finger[i-1].id != self.finger[i].id or i > 154:
+                    to_write += f'>> ({i}, {next_index}): {self.finger[i].id}\n'
+            logger.debug(f'fix_fingers {self.id}: {self.succ} and {self.pred}')
+            logger.debug(f'{self.id}:\n{to_write}')
             time.sleep(10)
 
     # Check predecessor method to periodically verify if the predecessor is alive
@@ -267,14 +304,6 @@ class ChordNode:
             # new_node_ip = str(msg[1])
             
             if option == JOIN:
-                # logger.debug(f'option broadcast msg: == JOIN - {self.ip}')
-            #   # self.ref._send_data(JOIN, {self.ref})
-                # response = f'{self.id},{self.ip}'.encode()
-                # with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                #     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                #     s.bind((self.ip, self.port))
-                #     conn, addr = s.accept()
-                #     conn.sendall(response)
                 
                 # msg[2] es el ip del nodo
                 if msg[2] == self.ip:
