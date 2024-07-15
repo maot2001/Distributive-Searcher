@@ -16,7 +16,7 @@ FIND_PREDECESSOR = 2
 GET_SUCCESSOR = 3
 GET_PREDECESSOR = 4
 NOTIFY = 5
-CHECK_PREDECESSOR = 6
+CHECK_NODE = 6
 CLOSEST_PRECEDING_FINGER = 7
 STORE_KEY = 8
 RETRIEVE_KEY = 9
@@ -57,7 +57,7 @@ class Node(ChordNode):
             ip = data[2]
             self.notify_pred(ChordNodeReference(ip, self.port))
 
-        elif option == CHECK_PREDECESSOR: pass
+        elif option == CHECK_NODE: data_resp = self.ref
 
         elif option == CLOSEST_PRECEDING_FINGER:
             id = int(data[1])

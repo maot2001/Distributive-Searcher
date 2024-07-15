@@ -19,7 +19,7 @@ FIND_PREDECESSOR = 2
 GET_SUCCESSOR = 3
 GET_PREDECESSOR = 4
 NOTIFY = 5
-CHECK_PREDECESSOR = 6
+CHECK_NODE = 6
 CLOSEST_PRECEDING_FINGER = 7
 STORE_KEY = 8
 RETRIEVE_KEY = 9
@@ -27,8 +27,22 @@ JOIN = 11
 NOTIFY_PRED = 12
 
 # Function to hash a string using SHA-1 and return its integer representation
-def getShaRepr(data: str):
-    return int(hashlib.sha1(data.encode()).hexdigest(), 16)
+def getShaRepr(data: str, max_value: int = 16):
+    # Genera el hash SHA-1 y obtén su representación en hexadecimal
+    hash_hex = hashlib.sha1(data.encode()).hexdigest()
+    
+    # Convierte el hash hexadecimal a un entero
+    hash_int = int(hash_hex, 16)
+    
+    # Define un arreglo o lista con los valores del 0 al 16
+    values = list(range(max_value + 1))
+    
+    # Usa el hash como índice para seleccionar un valor del arreglo
+    # Asegúrate de que el índice esté dentro del rango válido
+    index = hash_int % len(values)
+    
+    # Devuelve el valor seleccionado
+    return values[index]
 
 # Class to reference a Chord node
 class ChordNodeReference:
@@ -42,6 +56,7 @@ class ChordNodeReference:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 logger.debug(f'_send_data: {self.ip}: {op}')
+                if op == CHECK_NODE: s.settimeout(2)
                 s.connect((self.ip, self.port))
                 s.sendall(f'{op},{data}'.encode('utf-8'))
                 logger.debug(f'_send_data end: {self.ip}')
@@ -105,8 +120,8 @@ class ChordNodeReference:
         self._send_data(NOTIFY_PRED, f'{str(id)},{ip}')
 
     # Method to check if the predecessor is alive
-    def check_predecessor(self):
-        self._send_data(CHECK_PREDECESSOR)
+    def check_node(self):
+        return self._send_data(CHECK_NODE)
 
     # Method to find the closest preceding finger of a given id
     def closest_preceding_finger(self, id: int) -> 'ChordNodeReference':
@@ -224,16 +239,7 @@ class ChordNode:
                 self.succ = node
                 self.succ.notify(self.ref)
         elif self._inbetween(node.id, self.pred.id, self.id):
-            self.pred.notify_pred(node.id, node.ip)
             self.pred = node
-
-    def notify_pred(self, node: 'ChordNodeReference'):
-        logger.debug(f'in notify pred, my id: {self.id} my succ: {node.id}')
-        if node.id == self.id:
-            pass
-        elif self._inbetween(node.id, self.pred.id, self.id):
-            self.succ = node
-            self.succ.notify(self.id)
 
     # Fix fingers method to periodically update the finger table
     def fix_fingers(self):
@@ -262,10 +268,8 @@ class ChordNode:
     # Check predecessor method to periodically verify if the predecessor is alive
     def check_predecessor(self):
         while True:
-            try:
-                if self.pred:
-                    self.pred.check_predecessor()
-            except Exception as e:
+            if self.pred and self.pred.check_node() == b'':
+                logger.debug('\n\n\n ALARMA!!! PREDECESOR PERDIDO!!! \n\n\n')
                 self.pred = None
             time.sleep(10)
 
