@@ -116,8 +116,8 @@ class ChordNodeReference:
     def notify(self, node: 'ChordNodeReference'):
         self._send_data(NOTIFY, f'{node.id},{node.ip}')
 
-    def notify_pred(self, id: int, ip: str) -> 'ChordNodeReference':
-        self._send_data(NOTIFY_PRED, f'{str(id)},{ip}')
+    def notify_pred(self, node: 'ChordNodeReference'):
+        self._send_data(NOTIFY_PRED, f'{node.id},{node.ip}')
 
     # Method to check if the predecessor is alive
     def check_node(self):
@@ -160,7 +160,7 @@ class ChordNode:
 
         # Start background threads for stabilization, fixing fingers, and checking predecessor
         threading.Thread(target=self.stabilize, daemon=True).start()  # Start stabilize thread
-        threading.Thread(target=self.fix_fingers, daemon=True).start()  # Start fix fingers thread
+        # threading.Thread(target=self.fix_fingers, daemon=True).start()  # Start fix fingers thread
         threading.Thread(target=self.check_predecessor, daemon=True).start()  # Start check predecessor thread
         # threading.Thread(target=self.start_server, daemon=True).start()  # Start server thread
         threading.Thread(target=self._reciev_broadcast, daemon=True).start() ## Reciev broadcast message
@@ -178,10 +178,14 @@ class ChordNode:
         return node.succ  # Return successor of that node
 
     # Method to find the predecessor of a given id
-    def find_pred(self, id: int) -> 'ChordNodeReference':
+    def find_pred(self, id: int, direction=True) -> 'ChordNodeReference':
         node = self
-        while not self._inbetween(id, node.id, node.succ.id):
-            node = node.closest_preceding_finger(id)
+        if direction:
+            while not self._inbetween(id, node.id, node.succ.id):
+                node = node.succ
+        else:
+            while not self._inbetween(id, node.pred.id, node.id):
+                node = node.pred
         return node
 
     # Method to find the closest preceding finger of a given id
@@ -213,17 +217,15 @@ class ChordNode:
     # Stabilize method to periodically verify and update the successor and predecessor
     def stabilize(self):
         while True:
-            try:
-                if self.succ.id != self.id:
-                    logger.debug('stabilize')
+            if self.succ.id != self.id:
+                logger.debug('stabilize')
+                if self.succ.check_node() != b'':
                     x = self.succ.pred
                     if x.id != self.id:
                         logger.debug(x)
                         if x and self._inbetween(x.id, self.id, self.succ.id):
                             self.succ = x
                         self.succ.notify(self.ref)
-            except Exception as e:
-                logger.debug(f"Error in stabilize: {e}")
 
             logger.debug(f"successor : {self.succ} predecessor {self.pred}")
             time.sleep(10)
@@ -239,7 +241,12 @@ class ChordNode:
                 self.succ = node
                 self.succ.notify(self.ref)
         elif self._inbetween(node.id, self.pred.id, self.id):
+            self.pred.notify_pred(node)
             self.pred = node
+
+    def notify_pred(self, node: 'ChordNodeReference'):
+        logger.debug(f'in notify_pred, my id: {self.id} my succ: {node.id}')
+        self.succ = node
 
     # Fix fingers method to periodically update the finger table
     def fix_fingers(self):
@@ -270,7 +277,8 @@ class ChordNode:
         while True:
             if self.pred and self.pred.check_node() == b'':
                 logger.debug('\n\n\n ALARMA!!! PREDECESOR PERDIDO!!! \n\n\n')
-                self.pred = None
+                self.pred = self.find_pred(self.pred.id)
+                self.pred.notify_pred(self.ref)
             time.sleep(10)
 
     # Store key method to store a key-value pair and replicate to the successor
