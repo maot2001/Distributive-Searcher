@@ -1,12 +1,10 @@
 import threading
 import socket
-from typing import List
-import os
-import sqlite3
 import logging
 
-from DHT.chord import ChordNode, ChordNodeReference
-from database_controller.controller_database import DocController, initialize_Database
+from DHT.chord import ChordNode, ChordNodeReference, getShaRepr
+from database_controller.controller_database import DocumentController
+from searcher.process_query import Retrieval_Vectorial
 
 # Configurar el nivel de log
 logging.basicConfig(level=logging.DEBUG,
@@ -27,21 +25,55 @@ RETRIEVE_KEY = 9
 SEARCH = 10
 JOIN = 11
 NOTIFY_PRED = 12
+GET = 13
+INSERT = 14
+REMOVE = 15
+EDIT = 16
 
 
+def read_or_create_db(controller):
+    connect = controller.connect()
+    
+    cursor = connect.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS documentos (
+        	id INTEGER PRIMARY KEY,
+        	text TEXT NOT NULL,
+        	tf TEXT
+        );
+        ''')
+        
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS replica_succ (
+        	id INTEGER PRIMARY KEY,
+        	text TEXT NOT NULL,
+        	tf TEXT
+        );
+        ''')
+        
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS replica_pred (
+        	id INTEGER PRIMARY KEY,
+        	text TEXT NOT NULL,
+        	tf TEXT
+        );
+        ''')
+    connect.commit()
+    connect.close()
+        
 class Node(ChordNode):    
     def __init__(self, ip: str, port: int = 8001, m: int = 160):
         super().__init__(ip, port, m)
-        self.controller = DocController(self.ip)
-        initialize_Database(self.ip)
+        self.controller = DocumentController(self.ip)
+        self.model = Retrieval_Vectorial()
+        read_or_create_db(self.controller)
         threading.Thread(target=self.start_server, daemon=True).start()  # Start server thread
 
-
     def add_doc(self,document):
-        return self.controller.create_document(document)
+        return self.controller.create_document(id, document)
     
     def upd_doc(self,id,text):
-        return self.controller.update_document(id,text)
+        return self.controller.update_document(id, text)
     
     def del_doc(self,id):
         return self.controller.delete_document(id)
@@ -52,8 +84,8 @@ class Node(ChordNode):
     def get_doc_by_id(self,id):
         return self.controller.get_document_by_id(id)
     
-    def search(self, query) -> List:
-        return self.model.retrieve(query,self.controller)
+    def search(self, query):
+        return self.model.retrieve(query, self.controller)
     
     def data_receive(self, conn: socket, addr, data: list):
         data_resp = None 
@@ -100,8 +132,49 @@ class Node(ChordNode):
             ip = data[2]
             self.join(ChordNodeReference(ip, self.port))
 
+        elif option == INSERT:
+            text = ','.join(data[1:])
+            logger.debug(f'\n\nTHE TEXT:\n\n{text}\n\n')
+            id = getShaRepr(','.join(data[1:min(len(data),5)]))
+            self.add_doc(id, text)
 
-        if data_resp:
+        elif option == GET:
+            id = data[1]
+            data_resp = self.get_doc_by_id(id)[0]
+
+        elif option == REMOVE:
+            id = data[1]
+            data_resp = self.del_doc(id)
+
+        elif option == EDIT:
+            for i in range(1, len(data)):
+                if data[i] == '---':
+                    id = ','.join(data[1:i])
+                    text = ','.join(data[i+1:])
+                    self.upd_doc(id, text)
+                    break
+
+        elif option == SEARCH:
+            query = ','.join(data[1:])
+            response = self.search(query)
+            id = response[0][1]
+            text = response[0][0][0]
+            text = text.split()
+            text = text[:min(20, len(text))]
+            text = ' '.join(text)
+            data_resp = (id, text)
+            logger.debug(data_resp)
+
+
+        if data_resp and option == GET:
+            response = data_resp.encode()
+            conn.sendall(response)
+
+        elif data_resp and option == SEARCH:
+            response = f'{data_resp[0]},{data_resp[1]}'.encode()
+            conn.sendall(response)
+
+        elif data_resp:
             response = f'{data_resp.id},{data_resp.ip}'.encode()
             conn.sendall(response)
         conn.close()
