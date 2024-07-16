@@ -1,8 +1,12 @@
-from chord import ChordNode, ChordNodeReference
 import threading
 import socket
-
+from typing import List
+import os
+import sqlite3
 import logging
+
+from DHT.chord import ChordNode, ChordNodeReference
+from database_controller.controller_database import DocController, initialize_Database
 
 # Configurar el nivel de log
 logging.basicConfig(level=logging.DEBUG,
@@ -28,7 +32,28 @@ NOTIFY_PRED = 12
 class Node(ChordNode):    
     def __init__(self, ip: str, port: int = 8001, m: int = 160):
         super().__init__(ip, port, m)
+        self.controller = DocController(self.ip)
+        initialize_Database(self.ip)
         threading.Thread(target=self.start_server, daemon=True).start()  # Start server thread
+
+
+    def add_doc(self,document):
+        return self.controller.create_document(document)
+    
+    def upd_doc(self,id,text):
+        return self.controller.update_document(id,text)
+    
+    def del_doc(self,id):
+        return self.controller.delete_document(id)
+    
+    def get_docs(self):
+        return self.controller.get_documents()
+    
+    def get_doc_by_id(self,id):
+        return self.controller.get_document_by_id(id)
+    
+    def search(self, query) -> List:
+        return self.model.retrieve(query,self.controller)
     
     def data_receive(self, conn: socket, addr, data: list):
         data_resp = None 
