@@ -186,11 +186,19 @@ class ChordNode:
     def find_pred(self, id: int, direction=True) -> 'ChordNodeReference':
         node = self
         if direction:
-            while not self._inbetween(id, node.id, node.succ.id):
-                node = node.succ
+            while True:
+                if isinstance(node, ChordNodeReference) and node.succ == b'':
+                    return self.find_pred(id, False)
+                if not self._inbetween(id, node.id, node.succ.id):
+                    node = node.succ
+                else: break
         else:
-            while not self._inbetween(id, node.pred.id, node.id):
-                node = node.pred
+            while True:
+                if isinstance(node, ChordNodeReference) and node.pred == b'':
+                    return self.find_pred(id, True)
+                if not self._inbetween(id, node.pred.id, node.id):
+                    node = node.pred
+                else: break
         return node
 
     # Method to find the closest preceding finger of a given id
@@ -218,6 +226,8 @@ class ChordNode:
         msg = self.ref.join(self.ref)
         logger.debug(f'join_CN msg: {msg}')
         return self.join(ChordNodeReference(msg[2], PORT))
+    
+    
 
     # Stabilize method to periodically verify and update the successor and predecessor
     def stabilize(self):
@@ -246,12 +256,13 @@ class ChordNode:
                 self.succ = node
                 self.succ.notify(self.ref)
         elif self._inbetween(node.id, self.pred.id, self.id):
-            self.pred.notify_pred(node)
+            # self.pred.notify_pred(node)
             self.pred = node
 
     def notify_pred(self, node: 'ChordNodeReference'):
         logger.debug(f'in notify_pred, my id: {self.id} my succ: {node.id}')
         self.succ = node
+        self.succ.notify(self.ref)
 
     # Fix fingers method to periodically update the finger table
     def fix_fingers(self):
@@ -287,8 +298,8 @@ class ChordNode:
                     self.e.InElection = True
                     self.e.ImTheLeader = True
                     self.e.election_call()
-                self.pred = self.find_pred(self.pred.id)
-                self.pred.notify_pred(self.ref)
+                pred = self.find_pred(self.pred.id)
+                pred.notify_pred(self.ref)
             time.sleep(10)
 
     # Store key method to store a key-value pair and replicate to the successor
