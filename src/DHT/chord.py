@@ -2,9 +2,9 @@ import socket
 import threading
 import time
 import hashlib
-
 import logging
 
+from DHT.election import BullyBroadcastElector
 # Configurar el nivel de log
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(threadName)s - %(message)s')
@@ -146,7 +146,7 @@ class ChordNodeReference:
 
 # Class representing a Chord node
 class ChordNode:
-    def __init__(self, ip: str, port: int = 8001, m: int = 160):
+    def __init__(self, ip: str, port: int = 8001, m: int = 160, election: bool = False):
         self.id = getShaRepr(ip)
         self.ip = ip
         self.port = PORT
@@ -157,7 +157,12 @@ class ChordNode:
         self.finger = [self.ref] * self.m  # Finger table
         self.next = 0  # Finger table index to fix next
         self.data = {}  # Dictionary to store key-value pairs
-
+        self.election = election
+        #### Bully
+        if self.election:
+            self.e = BullyBroadcastElector()
+            threading.Thread(target=self.e.loop, daemon=True).start()
+        ####
         # Start background threads for stabilization, fixing fingers, and checking predecessor
         threading.Thread(target=self.stabilize, daemon=True).start()  # Start stabilize thread
         # threading.Thread(target=self.fix_fingers, daemon=True).start()  # Start fix fingers thread
@@ -277,6 +282,11 @@ class ChordNode:
         while True:
             if self.pred and self.pred.check_node() == b'':
                 logger.debug('\n\n\n ALARMA!!! PREDECESOR PERDIDO!!! \n\n\n')
+                if self.election:
+                    self.e.Leader = self.ip
+                    self.e.InElection = True
+                    self.e.ImTheLeader = True
+                    self.e.election_call()
                 self.pred = self.find_pred(self.pred.id)
                 self.pred.notify_pred(self.ref)
             time.sleep(10)

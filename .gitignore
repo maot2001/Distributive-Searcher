@@ -1,0 +1,4 @@
+src/server/data/nodes_data
+src/searcher/spacy_data
+src/database_controller/spacy_data/en_core_web_sm
+**/__pycache__

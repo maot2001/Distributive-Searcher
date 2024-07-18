@@ -3,7 +3,7 @@ from typing import List, Tuple
 from gensim.corpora import Dictionary
 import spacy
 
-nlp = spacy.load('database_controller/spacy_data/en_core_web_sm')
+nlp = spacy.load('src/searcher/spacy_data/en_core_web_sm')
 
 class data_processing:
     @staticmethod

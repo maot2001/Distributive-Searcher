@@ -62,8 +62,8 @@ def read_or_create_db(controller):
     connect.close()
         
 class Node(ChordNode):    
-    def __init__(self, ip: str, port: int = 8001, m: int = 160):
-        super().__init__(ip, port, m)
+    def __init__(self, ip: str, port: int = 8001, m: int = 160, election: bool = False):
+        super().__init__(ip, port, m, election= election)
         self.controller = DocumentController(self.ip)
         self.model = Retrieval_Vectorial()
         read_or_create_db(self.controller)
