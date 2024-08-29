@@ -23,34 +23,47 @@ class DocumentController(Controller):
     def __init__(self, ip):
         self.ip = ip
         DocumentController.dictionary = read_or_create_joblib(ip)
-        
+
     def connect(self):
         return sqlite3.connect(f"src/data/{self.ip}/database.db")
 
-    def create_document(self, id, text):
-        tokens = data_processing.tokenize_corpus([text])
-        DocumentController.dictionary.add_documents(tokens)
-        tf = DocumentController.dictionary.doc2bow(tokens[0])
+    def create_document(self, id, text, table):
+        try:
+            if table == 'documentos':
+                tokens = data_processing.tokenize_corpus([text])
+                DocumentController.dictionary.add_documents(tokens)
+                tf = DocumentController.dictionary.doc2bow(tokens[0])
 
-        tf_json = json.dumps(tf)
+                tf_json = json.dumps(tf)
 
+                conn = self.connect()
+                cursor = conn.cursor()
+
+
+                cursor.execute(f'''
+                    INSERT INTO {table} (id, text, tf) VALUES (?, ?, ?)
+                ''', (id, text, tf_json))
+                conn.commit()
+                conn.close()
+
+                dump(DocumentController.dictionary, f"src/data/{self.ip}/dictionary.joblib")
+            else:
+                conn = self.connect()
+                cursor = conn.cursor()
+
+                cursor.execute(f'''
+                    INSERT INTO {table} (id, text) VALUES (?, ?)
+                ''', (id, text))
+                conn.commit()
+                conn.close()
+        except:
+            pass
+
+
+    def get_documents(self, table):
         conn = self.connect()
         cursor = conn.cursor()
-
-
-        cursor.execute('''
-            INSERT INTO documentos (id, text, tf) VALUES (?, ?, ?)
-        ''', (id, text, tf_json))
-        conn.commit()
-        conn.close()
-
-        dump(DocumentController.dictionary, f"src/data/{self.ip}/dictionary.joblib")
-
-
-    def get_documents(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM documentos')
+        cursor.execute(f'SELECT * FROM {table}')
         docs = cursor.fetchall()
         conn.close()
         
@@ -63,7 +76,7 @@ class DocumentController(Controller):
         doc = cursor.fetchone()
         conn.close()
         
-        return doc
+        return doc[0]
     
     def get_documents_for_query(self):
         conn = self.connect()
@@ -74,57 +87,70 @@ class DocumentController(Controller):
         
         return doc
 
-    def update_document(self, id, text=None):
+    def update_document(self, id, table, text=None):
         conn = self.connect()
         cursor = conn.cursor()
-        
-        if text is not None:
-            cursor.execute('SELECT text FROM documentos WHERE id = ?', (id,))
-            doc = cursor.fetchone()[0]
-            
-            tokens = data_processing.tokenize_corpus([doc])
-            
-            bow = DocumentController.dictionary.doc2bow(tokens[0])
 
-            for word, count in bow:
-                DocumentController.dictionary.cfs[word] -= count
-                DocumentController.dictionary.dfs[word] -= 1
-            cursor.execute('''
-                UPDATE documentos SET text = ? WHERE id = ?
-            ''', (text, id))
-        
-        tokens_text = data_processing.tokenize_corpus([text])
-        tf = DocumentController.dictionary.doc2bow(tokens_text[0])
-        tf_json = json.dumps(tf)
-        
-        
-        if tf_json is not None:
-            cursor.execute('''
-                UPDATE documentos SET tf = ? WHERE id = ?
-            ''', (tf_json, id))
+        if table == 'documentos':
+            
+            if text is not None:
+                cursor.execute(f'SELECT text FROM {table} WHERE id = ?', (id,))
+                doc = cursor.fetchone()[0]
+                
+                tokens = data_processing.tokenize_corpus([doc])
+                
+                bow = DocumentController.dictionary.doc2bow(tokens[0])
+
+                for word, count in bow:
+                    DocumentController.dictionary.cfs[word] -= count
+                    DocumentController.dictionary.dfs[word] -= 1
+                cursor.execute(f'''
+                    UPDATE {table} SET text = ? WHERE id = ?
+                ''', (text, id))
+            
+            tokens_text = data_processing.tokenize_corpus([text])
+            tf = DocumentController.dictionary.doc2bow(tokens_text[0])
+            tf_json = json.dumps(tf)
+            
+            
+            if tf_json is not None:
+                cursor.execute(f'''
+                    UPDATE {table} SET tf = ? WHERE id = ?
+                ''', (tf_json, id))
+            
+            DocumentController.dictionary.add_documents(tokens_text)
+            dump(DocumentController.dictionary, 'dictionary.joblib')
+
+        else:
+            cursor.execute(f'''
+                    UPDATE {table} SET text = ? WHERE id = ?
+                ''', (text, id))
             
         conn.commit()
         conn.close()
-        
-        DocumentController.dictionary.add_documents(tokens_text)
-        dump(DocumentController.dictionary, 'dictionary.joblib')
 
-    def delete_document(self, id):
+    def delete_document(self, id, table):
         conn = self.connect()
         cursor = conn.cursor()
-        cursor.execute('SELECT text FROM documentos WHERE id = ?', (id,))
-        
-        doc = cursor.fetchone()[0]
-        tokens = data_processing.tokenize_corpus([doc])
-        
-        bow = DocumentController.dictionary.doc2bow(tokens[0])
-        
-        for word, count in bow:
-            DocumentController.dictionary.cfs[word] -= count
-            DocumentController.dictionary.dfs[word] -= 1
-        
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM documentos WHERE id = ?', (id,))
+
+        if table == 'documentos':
+            cursor.execute(f'SELECT text FROM {table} WHERE id = ?', (id,))
+            
+            doc = cursor.fetchone()[0]
+            tokens = data_processing.tokenize_corpus([doc])
+            
+            bow = DocumentController.dictionary.doc2bow(tokens[0])
+            
+            for word, count in bow:
+                DocumentController.dictionary.cfs[word] -= count
+                DocumentController.dictionary.dfs[word] -= 1
+            
+            cursor = conn.cursor()
+            cursor.execute(f'DELETE FROM {table} WHERE id = ?', (id,))
+
+        else:
+            cursor.execute(f'DELETE FROM {table} WHERE id = ?', (id,))
+
         conn.commit()
         conn.close()
         dump(DocumentController.dictionary, 'dictionary.joblib')

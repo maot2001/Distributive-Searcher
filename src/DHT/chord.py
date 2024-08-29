@@ -23,11 +23,13 @@ CHECK_NODE = 6
 CLOSEST_PRECEDING_FINGER = 7
 STORE_KEY = 8
 RETRIEVE_KEY = 9
+SEARCH = 10
 JOIN = 11
 NOTIFY_PRED = 12
+SEARCH_SLAVE = 30
 
 # Function to hash a string using SHA-1 and return its integer representation
-def getShaRepr(data: str, max_value: int = 16):
+def getShaRepr(data: str, max_value: int = 262144):
     # Genera el hash SHA-1 y obtén su representación en hexadecimal
     hash_hex = hashlib.sha1(data.encode()).hexdigest()
     
@@ -55,40 +57,31 @@ class ChordNodeReference:
     def _send_data(self, op: int, data: str = None) -> bytes:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                logger.debug(f'_send_data: {self.ip}: {op}')
                 if op == CHECK_NODE: s.settimeout(2)
                 s.connect((self.ip, self.port))
                 s.sendall(f'{op},{data}'.encode('utf-8'))
-                logger.debug(f'_send_data end: {self.ip}')
                 return s.recv(1024)
         except Exception as e:
-            logger.debug(f"Error sending data: {e}")
             return b''
         
     # Internal method to send data to all nodes
     def _send_data_global(self, op: int, data: str = None) -> list:
         try:
-            logger.debug(f'Broadcast: {self.ip}')
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.sendto(f'{op}, {data}'.encode(), (str(socket.INADDR_BROADCAST), PORT))
-            logger.debug(f'Broadcast end: {self.ip}')
-            response = s.recv(1024).decode().split(',')
+            s.sendto(f'{op},{data}'.encode(), (str(socket.INADDR_BROADCAST), PORT))
+            if op != SEARCH:
+                response = s.recv(1024).decode().split(',')
             s.close()
-            return response
+            if op != SEARCH:
+                return response
         except Exception as e:
-            logger.debug(f"Error sending Broadcast: {e}")
             return b''
                
     # Method to find a chord network node to conect
     def join(self, ip) -> list:
-        logger.debug(f'join start: {self.ip}')
-        # response = self._send_data_global(JOIN, str(id)).decode().split(',')
         response = self._send_data_global(JOIN, ip)
-        # # logger.debug(f'join msg : {ip} - {self.ip}')
-        logger.debug(f'join end: {self.ip}')
         return response
-        # return ChordNodeReference(response[1], self.port)
 
     # Method to find the successor of a given id
     def find_successor(self, id: int) -> 'ChordNodeReference':
@@ -161,6 +154,7 @@ class ChordNode:
         #### Bully
         if self.election:
             self.e = BullyBroadcastElector()
+            threading.Thread(target=self.e.server_thread, daemon=True).start()
             threading.Thread(target=self.e.loop, daemon=True).start()
         ####
         # Start background threads for stabilization, fixing fingers, and checking predecessor
@@ -186,11 +180,19 @@ class ChordNode:
     def find_pred(self, id: int, direction=True) -> 'ChordNodeReference':
         node = self
         if direction:
-            while not self._inbetween(id, node.id, node.succ.id):
-                node = node.succ
+            while True:
+                if isinstance(node, ChordNodeReference) and node.succ == b'':
+                    return self.find_pred(id, False)
+                if not self._inbetween(id, node.id, node.succ.id):
+                    node = node.succ
+                else: break
         else:
-            while not self._inbetween(id, node.pred.id, node.id):
-                node = node.pred
+            while True:
+                if isinstance(node, ChordNodeReference) and node.pred == b'':
+                    return self.find_pred(id, True)
+                if not self._inbetween(id, node.pred.id, node.id):
+                    node = node.pred
+                else: break
         return node
 
     # Method to find the closest preceding finger of a given id
@@ -213,17 +215,13 @@ class ChordNode:
       
     # Method to join a Chord network without 'node' reference as an entry point      
     def join_CN(self):
-        logger.debug(f'join_CN: {self.ip}')
-        # self.ref.join(self.ip)
         msg = self.ref.join(self.ref)
-        logger.debug(f'join_CN msg: {msg}')
         return self.join(ChordNodeReference(msg[2], PORT))
-
+    
     # Stabilize method to periodically verify and update the successor and predecessor
     def stabilize(self):
         while True:
             if self.succ.id != self.id:
-                logger.debug('stabilize')
                 if self.succ.check_node() != b'':
                     x = self.succ.pred
                     if x.id != self.id:
@@ -246,12 +244,13 @@ class ChordNode:
                 self.succ = node
                 self.succ.notify(self.ref)
         elif self._inbetween(node.id, self.pred.id, self.id):
-            self.pred.notify_pred(node)
+            # self.pred.notify_pred(node)
             self.pred = node
 
     def notify_pred(self, node: 'ChordNodeReference'):
         logger.debug(f'in notify_pred, my id: {self.id} my succ: {node.id}')
         self.succ = node
+        self.succ.notify(self.ref)
 
     # Fix fingers method to periodically update the finger table
     def fix_fingers(self):
@@ -283,12 +282,12 @@ class ChordNode:
             if self.pred and self.pred.check_node() == b'':
                 logger.debug('\n\n\n ALARMA!!! PREDECESOR PERDIDO!!! \n\n\n')
                 if self.election:
-                    self.e.Leader = self.ip
-                    self.e.InElection = True
+                    self.e.Leader = None
                     self.e.ImTheLeader = True
-                    self.e.election_call()
-                self.pred = self.find_pred(self.pred.id)
-                self.pred.notify_pred(self.ref)
+                    threading.Thread(target=self.e.loop, daemon=True).start()
+                pred = self.find_pred(self.pred.id)
+                self.pred = None
+                pred.notify_pred(self.ref)
             time.sleep(10)
 
     # Store key method to store a key-value pair and replicate to the successor
@@ -311,35 +310,29 @@ class ChordNode:
         while True:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.bind(('', int(PORT)))
-            msg, _ = s.recvfrom(1024)
-            # print(msg)
-            
-            logger.debug(f'Received broadcast: my ip {self.ip}')
+            msg, addr = s.recvfrom(1024)
             
             msg = msg.decode().split(',')
-            
-            # logger.debug(f'recieved broadcast msg: {msg}')
-            
             option = int(msg[0])
 
-            logger.debug(f'option broadcast msg: {option} - {self.ip}')
-            # new_node_ip = str(msg[1])
-            
             if option == JOIN:
-                
-                # msg[2] es el ip del nodo
-                if msg[2] == self.ip:
-                    logger.debug(f'My own broadcast msg: {self.id}')
-                else:
-                    # self.ref._send_data(JOIN, {self.ref})
+                if msg[2] != self.ip:
                     try:
                         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                            logger.debug(f'_send_data: {self.ip}')
                             s.connect((msg[2], self.port))
                             s.sendall(f'{JOIN},{self.ref}'.encode('utf-8'))
-                            logger.debug(f'_send_data end: {self.ip}')
                     except Exception as e:
-                        logger.debug(f"Error sending data: {e}")
-                #TODO Enviar respuesta
+                        logger.debug(f"Error in JOIN: {e}")
+
+            elif option == SEARCH:
+                try:
+                    query = ','.join(msg[1:])
+                    docs = '$$$'.join(self.search(query))
+                    response = f"{SEARCH_SLAVE},{docs}".encode()
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.connect((addr[0], 8002))
+                        s.sendall(response)
+                except Exception as e:
+                    logger.debug(f'Error in SEARCH: {e}')
 
             s.close()

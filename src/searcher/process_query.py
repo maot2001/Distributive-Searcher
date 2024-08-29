@@ -8,7 +8,7 @@ class Retrieval_Vectorial():
     def __init__(self):
         pass
     
-    def retrieve(self, query, controller: DocumentController, no_docs: int = 1):
+    def retrieve(self, query, controller: DocumentController):
         id_tf_documents = controller.get_documents_for_query()
 
         dictionary = controller.dictionary
@@ -18,7 +18,7 @@ class Retrieval_Vectorial():
 
         corpus = [item for sublist in all_list for item in sublist]
 
-        model = TfidfModel(corpus) 
+        model = TfidfModel(corpus)
 
         processed_query = data_processing.tokenize_corpus([query])[0]
         query_bow, missings = dictionary.doc2bow(processed_query, return_missing=True)
@@ -44,11 +44,15 @@ class Retrieval_Vectorial():
         # Calcular la similitud de la consulta con cada documento
         sims = index[query_tfidf]
 
+        # Filtrar documentos que tengan un TF-IDF mayor que el umbral especificado
+        filtered_indices = [i for i, sim in enumerate(sims) if sim > 0]
+
         # Ordenar los documentos por similitud
-        sorted_sims_indices = sims.argsort()[::-1][:no_docs]
+        sorted_sims_indices = sorted(filtered_indices, key=lambda i: sims[i], reverse=True)
 
         # Obtener los IDs de los documentos más relevantes
         most_relevant_doc_ids = [id_tf_documents[i][0] for i in sorted_sims_indices]
-        docs = [(controller.get_document_by_id(doc_id), doc_id) for doc_id in most_relevant_doc_ids]
+        texts = [' '.join(controller.get_document_by_id(doc_id).split()[:40]) for doc_id in most_relevant_doc_ids]
+        docs = [f'{doc_id},{text}' for doc_id, text in zip(most_relevant_doc_ids, texts)]
 
         return docs

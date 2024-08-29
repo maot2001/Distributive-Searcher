@@ -1,5 +1,11 @@
 import socket, threading, time
 import logging
+
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s - %(levelname)s - %(threadName)s - %(message)s')
+
+logger = logging.getLogger(__name__)
+
 PORT = '8005'
 MCASTADDR = '224.0.0.1'
 ID = str(socket.gethostbyname(socket.gethostname()))
@@ -31,23 +37,14 @@ class BullyBroadcastElector:
     def election_call(self):
         t = threading.Thread(target=broadcast_call,args=(f'{ELECTION}', self.port))
         t.start() 
-        print("Election Started")
 
     def winner_call(self):
         t = threading.Thread(target=broadcast_call,args=(f'{WINNER}', self.port))
         t.start() 
 
     def loop(self):
-        t = threading.Thread(target=self.server_thread)
-        t.start()
-
         counter = 0
         while True:
-            #SIempre hay lider segun todos los nodos
-            # logging.debug(f"=========================================")
-            # logging.debug(f"El lider segun {self.id} => {self.Leader}")
-            # logging.debug(f"=========================================")
-            
             if not self.Leader and not self.InElection:
                 self.election_call()
                 self.InElection = True
@@ -56,18 +53,39 @@ class BullyBroadcastElector:
                 counter += 1
                 if counter == 3:
                     if not self.Leader and self.ImTheLeader:
-                        self.ImTheLeader = True
                         self.Leader = self.id
-                        self.InElection = False
                         self.winner_call()
                     counter = 0
                     self.InElection = False
 
-            else:
-                print(f'Leader: {self.Leader}')
-
-            # print(f"{counter} waiting")
             time.sleep(1)
+
+    def data_receive(self, newId, msg):
+        msg = int(msg)
+        if msg == ELECTION and newId != self.id:
+            #logger.debug(f"Election message received from: {newId}")
+
+            if not self.InElection:
+                self.Leader = None
+                self.ImTheLeader = True
+                threading.Thread(target=self.loop).start()
+
+            if self.bully(self.id, newId):
+                #logger.debug(f"OK message sending to: {newId}")
+                s_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s_send.sendto(f'{OK}'.encode(), (newId, self.port))
+
+        elif msg == OK:
+            #logger.debug(f"OK message received from: {newId}")
+            self.ImTheLeader = False
+
+        elif msg == WINNER:
+            logger.debug(f"Winner message received from: {newId}")
+            if not self.bully(self.id, newId) and (not self.Leader or self.bully(newId, self.Leader)):
+                self.Leader = newId
+                if self.Leader != self.id:
+                    self.ImTheLeader = False
+                self.InElection = False
 
     def server_thread(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -84,33 +102,7 @@ class BullyBroadcastElector:
                 newId = sender[0]
                 msg = msg.decode("utf-8")
 
-                if msg.isdigit():
-                    msg = int(msg)
-                    if msg == ELECTION and not self.InElection:
-                        print(f"Election message received from: {newId}")
-
-                        if not self.InElection:
-                            self.InElection = True
-                            # self.Leader = None
-                            self.election_call()
-
-                        if self.bully(self.id, newId):
-                            s_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                            s_send.sendto(f'{OK}'.encode(), (newId, self.port))
-
-                    elif msg == OK:
-                        print(f"OK message received from: {newId}")
-                        if self.Leader and self.bully(newId, self.Leader):
-                            self.Leader = newId
-                        self.ImTheLeader = False
-
-                    elif msg == WINNER:
-                        print(f"Winner message received from: {newId}")
-                        if not self.bully(self.id, newId) and (not self.Leader or self.bully(newId, self.Leader)):
-                            self.Leader = newId
-                            if(self.Leader != self.id):
-                                self.ImTheLeader = False
-                            self.InElection = False
+                threading.Thread(target=self.data_receive, args=(newId, msg)).start()
 
             except Exception as e:
-                print(f"Error in server_thread: {e}")
+                logger.debug(f"Error in server_thread: {e}")
