@@ -48,7 +48,6 @@ def getShaRepr(data: str, max_value: int = 16):
     return values[index]
 
 
-
 def decode_response(S, char=None, split_char = None):
     if S == '': #Un error al acceder a un nodo devuelve la misma cadena vacía
         logger.debug(f"Que raro")
@@ -91,7 +90,7 @@ class ChordNodeReference:
                     s.sendall(f'{op},{data},¬{clock}'.encode('utf-8'))
                 else:
                     s.sendall(f'{op},{data}'.encode('utf-8'))
-                return s.recv(1024)
+                return s.recv(2048)
         except Exception as e:
             return b''
         
@@ -105,7 +104,8 @@ class ChordNodeReference:
             else:
                 s.sendto(f'{op},{data}'.encode(), (str(socket.INADDR_BROADCAST), PORT))
             if op != SEARCH:
-                response = s.recv(1024).decode().split(',')
+                response = s.recv(2048).decode()
+                response = decode_response(response, split_char=',', char="¬")
             s.close()
             if op != SEARCH:
                 return response
@@ -123,12 +123,14 @@ class ChordNodeReference:
     def find_successor(self, id: int, clock = b'') -> 'ChordNodeReference':
         response = self._send_data(FIND_SUCCESSOR, str(id), clock=clock).decode()
         response = decode_response(response, split_char=',', char='¬')
+        if response == b'': return response
         return ChordNodeReference(response[1], self.port), response[-1]
 
     # Method to find the predecessor of a given id
     def find_predecessor(self, id: int, clock = b'') -> 'ChordNodeReference':
         response = self._send_data(FIND_PREDECESSOR, str(id), clock=clock).decode()
         response = decode_response(response, split_char=',', char='¬')
+        if response == b'': return response
         return ChordNodeReference(response[1], self.port), response[-1]
 
     # Property to get the successor of the current node
@@ -137,7 +139,7 @@ class ChordNodeReference:
         response = self._send_data(GET_SUCCESSOR, clock=clock).decode()
         response = decode_response(response, split_char=',', char='¬')
         if response == b'': return response
-        return ChordNodeReference(response[1], self.port)
+        return ChordNodeReference(response[1], self.port), response[-1]
 
     # Property to get the predecessor of the current node
     
@@ -145,7 +147,7 @@ class ChordNodeReference:
         response = self._send_data(GET_PREDECESSOR, clock=clock).decode()
         response = decode_response(response, split_char=',', char='¬')
         if response == b'': return response
-        return ChordNodeReference(response[1], self.port)
+        return ChordNodeReference(response[1], self.port), response[-1]
 
     # Method to notify the current node about another node
     def notify(self, node: 'ChordNodeReference', clock = b''):
@@ -223,7 +225,11 @@ class ChordNode:
         node = self.find_pred(id)  # Find predecessor of id
         if isinstance(node, ChordNodeReference):
             clock_copy = self.clock.send_event()
-            return node.succ(clock= clock_copy)  # Return successor of that node
+            x = node.succ(clock= clock_copy)  # Return successor of that node
+            if x != b'':
+                self.clock.update(x[-1])
+                return x[0] 
+            return x
         else:
             return node.succ
     # Method to find the predecessor of a given id #?
@@ -236,8 +242,8 @@ class ChordNode:
                     x = node.succ(clock= clock_copy1)
                     if x == b'':
                         return self.find_pred(id, False)
-                    if not self._inbetween(id, node.id, x.id):
-                        node = x
+                    if not self._inbetween(id, node.id, x[0].id):
+                        node = x[0]
                     else: break
                 if not isinstance(node, ChordNodeReference) and not self._inbetween(id, node.id, node.succ.id): # nodo sigue siendo self
                     node = node.succ
@@ -249,8 +255,8 @@ class ChordNode:
                     y = node.pred(clock= clock_copy2)
                     if  y == b'':
                         return self.find_pred(id, True)
-                    if not self._inbetween(id, y.id, node.id):
-                        node = y
+                    if not self._inbetween(id, y[0].id, node.id):
+                        node = y[0]
                     else: break
                 if not isinstance(node, ChordNodeReference) and not self._inbetween(id, node.pred.id, node.id):  # nodo sigue siendo self
                     node = node.pred
@@ -258,16 +264,18 @@ class ChordNode:
         return node
 
     # Method to join a Chord network using 'node' as an entry point
-    def join(self, node: 'ChordNodeReference'): #* ?
+    def join(self, node: 'ChordNodeReference'): #* ???
         if node:
             self.pred = None
             clock_copy1 = self.clock.send_event()
-            x, clock_sent = node.find_successor(self.id, clock=clock_copy1)
-            self.succ = x
-            #logger.debug(f"Hola de join de CC clock_sent = {clock_sent}")
-            self.clock.update(clock_sent)
-            clock_copy2 = self.clock.send_event()
-            self.succ.notify(self.ref, clock=clock_copy2)
+            x = node.find_successor(self.id, clock=clock_copy1) #? Si se cae hacer un nuevo broadcast
+            if x != b'': #todo ver como se hace para volver a entrar en la red una vez que se caiga tu vecino
+                self.succ = x[0] 
+                #logger.debug(f"Hola de join de CC clock_sent = {clock_sent}")
+                clock_sent = x[-1]
+                self.clock.update(clock_sent)
+                clock_copy2 = self.clock.send_event()
+                self.succ.notify(self.ref, clock=clock_copy2)
         else:
             self.succ = self.ref
             self.pred = None
@@ -293,12 +301,12 @@ class ChordNode:
                     #if x != b'':
                     #    clock_copy3 = x[-1]
                     #    self.clock.update(clock_copy3)
-                    if x != b'' and x.id != self.id:
+                    if x != b'' and x[0].id != self.id:
                         clock_copy3 = x[-1]
                         self.clock.update(clock_copy3)
                         logger.debug(x)
-                        if x and self._inbetween(x.id, self.id, self.succ.id):
-                            self.succ = x
+                        if x[0] and self._inbetween(x[0].id, self.id, self.succ.id):
+                            self.succ = x[0]
                         clock_copy4 = self.clock.send_event()
                         self.succ.notify(self.ref, clock= clock_copy4)
 
@@ -380,11 +388,14 @@ class ChordNode:
             s.bind(('', int(PORT)))
             msg, addr = s.recvfrom(1024)
             
-            msg = msg.decode().split(',')
+            msg = msg.decode()
+            msg = decode_response(msg, split_char=',', char='¬')
             option = int(msg[0])
 
             if option == JOIN:
                 if msg[2] != self.ip:
+                    clock_sent = msg[-1]
+                    self.clock.update(clock_sent)
                     try:
                         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                             clock_copy1 = self.clock.send_event()
@@ -395,7 +406,9 @@ class ChordNode:
 
             elif option == SEARCH:
                 try:
-                    query = ','.join(msg[1:])
+                    clock_sent = msg[-1]
+                    self.clock.update(clock_sent)
+                    query = ','.join(msg[1:-1])
                     docs = '$$$'.join(self.search(query))
                     clock_copy2 = self.clock.send_event()
                     response = f"{SEARCH_SLAVE},{docs},¬{clock_copy2}".encode() #*Reloj

@@ -25,8 +25,9 @@ if __name__ == "__main__":
         for doc in dataset:
             if int(doc) > 5: break
             text = dataset[doc].split(',')
+            clock_ini = [0] * node.m #! provicional esto debe estar dado por el limite de la red (el cual tengo en el parámetro m)
             id = getShaRepr(','.join(text[0:min(len(text),4)]))
-            node.add_doc(id, dataset[doc], 'documentos')
+            node.add_doc(id=id, document=dataset[doc], clock=str(clock_ini),table='documentos')
             if id in change: raise Exception
             change[id] = doc
 
