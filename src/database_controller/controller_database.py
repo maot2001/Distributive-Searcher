@@ -7,6 +7,12 @@ from gensim.corpora import Dictionary
 from database_controller.database_interface import Controller
 from searcher.preprocess import data_processing
 
+#import logging
+#logging.basicConfig(level=logging.DEBUG,
+#                    format='%(asctime)s - %(levelname)s - %(threadName)s - %(message)s')
+#
+#logger = logging.getLogger(__name__)
+
 def read_or_create_joblib(ip):
     ip = str(ip)
     os.makedirs(f"src/data/{ip}/", exist_ok=True)
@@ -78,7 +84,6 @@ class DocumentController(Controller):
             cursor.execute(f'SELECT text, clock FROM {table} WHERE id = ?', (_id,))
             doc = cursor.fetchone()
             conn.close()
-            print(f"doc text = {doc[0]} dock clock = {doc[1]}")
             return doc[0], doc[1]
         except:
             return None

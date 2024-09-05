@@ -255,25 +255,23 @@ class Node(ChordNode):
             self.join(ChordNodeReference(ip, self.port))
 
         elif option == INSERT:
-            id = data[2]
+            id = int(data[2])
             
             index = data.index("|||")
-            logger.debug(f"Insert index = {index} data = {data}")
-            clock_for_doc = data[index+1:-1]
+            clock_for_doc = "[" +('\''.join(data[index+2:-2])).replace("\'",",") + "]"
             text = ','.join(data[3:index])
             send_flag = True
             if data[1].startswith("documentos"):
-                table = "documentos"
+                table = 'documentos'
                 doc_in_bd = self.get_doc_by_id(id)
-                logger.debug(f"doc doc_in_bd = {doc_in_bd}")
                 if not doc_in_bd: # Revisa si esta en la base de datos
-                    self.add_doc(id, clock_for_doc, text, table) 
+                    self.add_doc(id, text, clock_for_doc, table) 
                 else: 
                     clock_in_bd = doc_in_bd[1]
                     if CompareClocks(clock_in_bd,clock_in_bd): # Revisa si el documento guardado en la base de datos es el más reciente
                         send_flag = False # no lo replica se trata de una versión antigua
                     else: 
-                        self.add_doc(id, clock_for_doc, text, table)
+                        self.add_doc(id, text, clock_for_doc, table)
                 if send_flag:
                     clock_copy = self.clock.send_event()
                     if data[1][len("documentos"):] == "S":
@@ -287,31 +285,26 @@ class Node(ChordNode):
                         self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
             else: # El documento se guarda en una de las réplicas 
                 if data[1].startswith("replica_succ"):
-                    logger.debug(f"Replica id = {id} table = {data[1]}")
                     doc_in_bd = self.get_doc_by_id(id,"replica_succ")
-                    logger.debug(f"rep doc_in_bd = {doc_in_bd}")
-                    table = "replica_succ"
+                    table = 'replica_succ'
                     if not doc_in_bd: # Devolvió None
-                        logger.debug(f"Replica id = {id} guardada")
-                        self.add_doc(id, clock_for_doc, text, table)
+                        self.add_doc(id,  text, clock_for_doc, table)
                     else:
                         clock_in_bd = doc_in_bd[1]
                         if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
-                            logger.debug(f"Replica id = {id} guardada")
-                            self.add_doc(id, clock_for_doc, text, table)
+                            self.add_doc(id,  text, clock_for_doc, table)
                             if self.pred:
                                 clock_copy = self.clock.send_event()
                                 self.pred._send_data(INSERT, f'documentosS,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
                 else:
                     doc_in_bd = self.get_doc_by_id(id,"replica_pred")
-                    logger.debug(f"pre doc_in_bd = {doc_in_bd}")
-                    table = "replica_pred"
+                    table = 'replica_pred'
                     if not doc_in_bd: # Devolvió None
-                        self.add_doc(id, clock_for_doc, text, table)
+                        self.add_doc(id,  text, clock_for_doc, table)
                     else:
                         clock_in_bd = doc_in_bd[1]
                         if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
-                            self.add_doc(id, clock_for_doc, text, table)
+                            self.add_doc(id,  text, clock_for_doc, table)
                             clock_copy = self.clock.send_event()
                             self.succ._send_data(INSERT, f'documentosP,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
                         
@@ -429,7 +422,8 @@ class Node(ChordNode):
         return self.controller.get_docs_between(tables, min, max)
 
     def check_docs(self):
-
+        
+        
         # toma sus documentos y las replicas de su predecesor
         my_docs = self.get_docs('documentos')
         pred_docs = self.get_docs('replica_pred')
@@ -441,7 +435,6 @@ class Node(ChordNode):
                 # le dice que lo inserte en sus documentos
                 clock_copy1 = self.clock.send_event()
                 self.pred._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy1) # Este paso asegura la replicación a ambos lados del vecino
-                
                 # lo elimina de sus documentos
                 self.del_doc(doc[0], 'documentos')
                 clock_copy2 = self.clock.send_event()
@@ -479,7 +472,6 @@ class Node(ChordNode):
 
     # luego aqui entra el predecesor
     def check_docs_pred(self):
-        
         # toma sus documentos y las replicas de su sucesor
         my_docs = self.get_docs('documentos')
         succ_docs = self.get_docs('replica_succ')
