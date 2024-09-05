@@ -19,16 +19,17 @@ def CompareClocks(clock1, clock2):
     try: #Devuelve True si el primero es "más reciente"
         clock1= clockToList(clock1)
         clock2= clockToList(clock2)
-        answ = 1
+        ans = True
         for i in range(0,len(clock1)):
             if clock1[i] >= clock2[i]:
                 continue
             else:
-                answ = -1
+                answ = False
                 break
-        return True
+        return ans
     except:
             pass
+    
 # Operation codes
 FIND_SUCCESSOR = 1
 FIND_PREDECESSOR = 2
@@ -206,7 +207,6 @@ class Node(ChordNode):
            logger.debug(f"Petición del cliente! ")
            self.clock.increment()
         else: # Al no ser un mensaje del cliente este tiene reloj
-            logger.debug(f"HTF")
             clock_sent = data[-1]
             #logger.debug(f"Reloj enviado = {clock_sent}")
             data = data[0:-1] # Remover el reloj
@@ -265,10 +265,11 @@ class Node(ChordNode):
             if data[1].startswith("documentos"):
                 table = "documentos"
                 doc_in_bd = self.get_doc_by_id(id)
+                logger.debug(f"doc doc_in_bd = {doc_in_bd}")
                 if not doc_in_bd: # Revisa si esta en la base de datos
                     self.add_doc(id, clock_for_doc, text, table) 
                 else: 
-                    clock_in_bd = doc_in_bd[2]
+                    clock_in_bd = doc_in_bd[1]
                     if CompareClocks(clock_in_bd,clock_in_bd): # Revisa si el documento guardado en la base de datos es el más reciente
                         send_flag = False # no lo replica se trata de una versión antigua
                     else: 
@@ -286,25 +287,29 @@ class Node(ChordNode):
                         self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
             else: # El documento se guarda en una de las réplicas 
                 if data[1].startswith("replica_succ"):
-                    
+                    logger.debug(f"Replica id = {id} table = {data[1]}")
                     doc_in_bd = self.get_doc_by_id(id,"replica_succ")
+                    logger.debug(f"rep doc_in_bd = {doc_in_bd}")
                     table = "replica_succ"
                     if not doc_in_bd: # Devolvió None
+                        logger.debug(f"Replica id = {id} guardada")
                         self.add_doc(id, clock_for_doc, text, table)
                     else:
-                        clock_in_bd = doc_in_bd[2]
+                        clock_in_bd = doc_in_bd[1]
                         if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
+                            logger.debug(f"Replica id = {id} guardada")
                             self.add_doc(id, clock_for_doc, text, table)
                             if self.pred:
                                 clock_copy = self.clock.send_event()
                                 self.pred._send_data(INSERT, f'documentosS,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
                 else:
                     doc_in_bd = self.get_doc_by_id(id,"replica_pred")
+                    logger.debug(f"pre doc_in_bd = {doc_in_bd}")
                     table = "replica_pred"
                     if not doc_in_bd: # Devolvió None
                         self.add_doc(id, clock_for_doc, text, table)
                     else:
-                        clock_in_bd = doc_in_bd[2]
+                        clock_in_bd = doc_in_bd[1]
                         if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
                             self.add_doc(id, clock_for_doc, text, table)
                             clock_copy = self.clock.send_event()
@@ -320,7 +325,7 @@ class Node(ChordNode):
 
         elif option == GET:
             id = data[1]
-            data_resp = self.get_doc_by_id(id).encode()
+            data_resp = self.get_doc_by_id(id)[0].encode()
 
         elif option == REMOVE:
             table = data[1]

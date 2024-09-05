@@ -71,14 +71,17 @@ class DocumentController(Controller):
         
         return docs
     
-    def get_document_by_id(self, _id):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute('SELECT text FROM documentos WHERE id = ?', (_id,))
-        doc = cursor.fetchone()
-        conn.close()
-        
-        return doc[0]
+    def get_document_by_id(self, _id, table = 'documentos'):
+        try:
+            conn = self.connect()
+            cursor = conn.cursor()
+            cursor.execute(f'SELECT text, clock FROM {table} WHERE id = ?', (_id,))
+            doc = cursor.fetchone()
+            conn.close()
+            print(f"doc text = {doc[0]} dock clock = {doc[1]}")
+            return doc[0], doc[1]
+        except:
+            return None
     
     def get_documents_for_query(self):
         conn = self.connect()
