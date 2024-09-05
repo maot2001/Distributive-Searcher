@@ -13,6 +13,22 @@ logging.basicConfig(level=logging.DEBUG,
 
 logger = logging.getLogger(__name__)
 
+def clockToList(clock: str) -> list[int]:
+    return [int(num) for num in clock.strip('[]').split(',') if num.strip()]
+def CompareClocks(clock1, clock2):
+    try: #Devuelve True si el primero es "más reciente"
+        clock1= clockToList(clock1)
+        clock2= clockToList(clock2)
+        answ = 1
+        for i in range(0,len(clock1)):
+            if clock1[i] >= clock2[i]:
+                continue
+            else:
+                answ = -1
+                break
+        return True
+    except:
+            pass
 # Operation codes
 FIND_SUCCESSOR = 1
 FIND_PREDECESSOR = 2
@@ -108,8 +124,8 @@ class Node(ChordNode):
     def get_docs(self, table):
         return self.controller.get_documents(table)
     
-    def get_doc_by_id(self, id):
-        return self.controller.get_document_by_id(id)
+    def get_doc_by_id(self, id, table = "documentos"):
+        return self.controller.get_document_by_id(id, table)
     
     def search(self, query):
         return self.model.retrieve(query, self.controller)
@@ -183,13 +199,14 @@ class Node(ChordNode):
         data_resp = None 
         option = int(data[0])
 
-        #logger.debug(f"data receive = {data}")
+        logger.debug(f"data receive init = {data}")
 
         # El cliente no envian reloj pero si se verá reflejado en el reloj del "líder"
         if option == GET_CLIENT or option == SEARCH_CLIENT or option == INSERT_CLIENT or option == REMOVE_CLIENT or option == EDIT_CLIENT:
            logger.debug(f"Petición del cliente! ")
            self.clock.increment()
         else: # Al no ser un mensaje del cliente este tiene reloj
+            logger.debug(f"HTF")
             clock_sent = data[-1]
             #logger.debug(f"Reloj enviado = {clock_sent}")
             data = data[0:-1] # Remover el reloj
@@ -238,19 +255,68 @@ class Node(ChordNode):
             self.join(ChordNodeReference(ip, self.port))
 
         elif option == INSERT:
-            table = data[1]
             id = data[2]
             
             index = data.index("|||")
+            logger.debug(f"Insert index = {index} data = {data}")
             clock_for_doc = data[index+1:-1]
             text = ','.join(data[3:index])
-            self.add_doc(id, clock_for_doc, text, table)
-            
-            if table == 'documentos':
-                clock_copy = self.clock.send_event()
-                if self.pred:
-                    self.pred._send_data(INSERT, f'replica_succ,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
-                self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
+            send_flag = True
+            if data[1].startswith("documentos"):
+                table = "documentos"
+                doc_in_bd = self.get_doc_by_id(id)
+                if not doc_in_bd: # Revisa si esta en la base de datos
+                    self.add_doc(id, clock_for_doc, text, table) 
+                else: 
+                    clock_in_bd = doc_in_bd[2]
+                    if CompareClocks(clock_in_bd,clock_in_bd): # Revisa si el documento guardado en la base de datos es el más reciente
+                        send_flag = False # no lo replica se trata de una versión antigua
+                    else: 
+                        self.add_doc(id, clock_for_doc, text, table)
+                if send_flag:
+                    clock_copy = self.clock.send_event()
+                    if data[1][len("documentos"):] == "S":
+                        if self.pred:
+                            self.pred._send_data(INSERT, f'replica_succ,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
+                    elif data[1][len("documentos"):] == "P":
+                        self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
+                    else:
+                        if self.pred:
+                            self.pred._send_data(INSERT, f'replica_succ,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
+                        self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
+            else: # El documento se guarda en una de las réplicas 
+                if data[1].startswith("replica_succ"):
+                    
+                    doc_in_bd = self.get_doc_by_id(id,"replica_succ")
+                    table = "replica_succ"
+                    if not doc_in_bd: # Devolvió None
+                        self.add_doc(id, clock_for_doc, text, table)
+                    else:
+                        clock_in_bd = doc_in_bd[2]
+                        if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
+                            self.add_doc(id, clock_for_doc, text, table)
+                            if self.pred:
+                                clock_copy = self.clock.send_event()
+                                self.pred._send_data(INSERT, f'documentosS,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
+                else:
+                    doc_in_bd = self.get_doc_by_id(id,"replica_pred")
+                    table = "replica_pred"
+                    if not doc_in_bd: # Devolvió None
+                        self.add_doc(id, clock_for_doc, text, table)
+                    else:
+                        clock_in_bd = doc_in_bd[2]
+                        if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
+                            self.add_doc(id, clock_for_doc, text, table)
+                            clock_copy = self.clock.send_event()
+                            self.succ._send_data(INSERT, f'documentosP,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
+                        
+            #self.add_doc(id, clock_for_doc, text, table)
+            #
+            #if table == 'documentos':
+            #    clock_copy = self.clock.send_event()
+            #    if self.pred:
+            #        self.pred._send_data(INSERT, f'replica_succ,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
+            #    self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
 
         elif option == GET:
             id = data[1]
@@ -369,7 +435,7 @@ class Node(ChordNode):
                 
                 # le dice que lo inserte en sus documentos
                 clock_copy1 = self.clock.send_event()
-                self.pred._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy1)
+                self.pred._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy1) # Este paso asegura la replicación a ambos lados del vecino
                 
                 # lo elimina de sus documentos
                 self.del_doc(doc[0], 'documentos')
@@ -388,10 +454,13 @@ class Node(ChordNode):
             if self.pred and not self._inbetween(doc[0], self.pred.id, self.id):
                 
                 # lo elimina porque cambio su predecesor
+                #? Lo envio como document a mi antecesor? o como replica_pred a mi predecesor?
                 self.del_doc(doc[0], 'replica_pred') #todo enviarlo al predecesor? (Tal vez sea la más reciente?)
 
             else:
                 # si el id esta entre su nuevo predecesor y el, o sea le pertenece a el
+                #? Averiguo si documento esta en mis documentos? puedo garantizar que nunca lo estará? 
+                #*(Creo que si lo puedo garantizar)
                 self.add_doc(id=doc[0], document=doc[1], clock=doc[2],table='documentos')
 
                 # luego lo elimina de sus replicados
