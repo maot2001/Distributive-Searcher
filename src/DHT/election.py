@@ -30,6 +30,7 @@ class BullyBroadcastElector:
         self.Leader = None
         self.InElection = False
         self.ImTheLeader = True
+        self.InElectionSwap = False
 
     def bully(self, id: str, otherId: str):
         return int(id.split('.')[-1]) > int(otherId.split('.')[-1])
@@ -45,27 +46,38 @@ class BullyBroadcastElector:
     def loop(self):
         counter = 0
         while True:
+            counter += 1
             if not self.Leader and not self.InElection:
-                self.election_call()
                 self.InElection = True
+                self.InElectionSwap = False
+                #logger.debug(f"Election message sending")
+                self.election_call()
 
-            elif self.InElection:
-                counter += 1
+            if self.InElection:
+                #logger.debug(f"In Election counter {counter}")
                 if counter == 3:
                     if not self.Leader and self.ImTheLeader:
                         self.Leader = self.id
                         self.winner_call()
-                    counter = 0
                     self.InElection = False
+                    counter = 0
+                    break
 
+            if counter == 3:
+                break
+            
             time.sleep(1)
+        #logger.debug(f"Close Loop")
+        
 
     def data_receive(self, newId, msg):
         msg = int(msg)
         if msg == ELECTION and newId != self.id:
             #logger.debug(f"Election message received from: {newId}")
 
-            if not self.InElection:
+            if not self.InElection and not self.InElectionSwap:
+                #logger.debug(f"Election message passed from: {newId}")
+                self.InElectionSwap = True
                 self.Leader = None
                 self.ImTheLeader = True
                 threading.Thread(target=self.loop).start()
@@ -80,12 +92,14 @@ class BullyBroadcastElector:
             self.ImTheLeader = False
 
         elif msg == WINNER:
-            logger.debug(f"Winner message received from: {newId}")
+            #logger.debug(f"Winner message received from: {newId}")
             if not self.bully(self.id, newId) and (not self.Leader or self.bully(newId, self.Leader)):
                 self.Leader = newId
                 if self.Leader != self.id:
                     self.ImTheLeader = False
                 self.InElection = False
+            #else:
+                #logger.debug(f'Reject Winner message from {newId}, my leader is {self.Leader}')
 
     def server_thread(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

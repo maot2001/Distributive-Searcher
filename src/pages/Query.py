@@ -36,8 +36,11 @@ for i, r in enumerate(docs):
     st.write(r[1])
     if st.button('Ver Más...', key=f'show_{i}'):
         doc = client.get(r[0])
-        data = doc.decode().split(',')
-        doc = ','.join(data[0:])
-        st.session_state.doc = (r[0], doc)
-        del st.session_state['docs']
-        st.switch_page("pages/Document.py")
+        if doc.decode() == 'None':
+            st.write('Este documento ya no se encuentra en los datos')
+        else:
+            data = doc.decode().split(',')
+            doc = ','.join(data[0:])
+            st.session_state.doc = (r[0], doc)
+            del st.session_state['docs']
+            st.switch_page("pages/Document.py")

@@ -45,14 +45,15 @@ class Retrieval_Vectorial():
         sims = index[query_tfidf]
 
         # Filtrar documentos que tengan un TF-IDF mayor que el umbral especificado
-        filtered_indices = [i for i, sim in enumerate(sims) if sim > 0]
+        filtered_indices = [i for i, sim in enumerate(sims) if sim > .2]
 
         # Ordenar los documentos por similitud
         sorted_sims_indices = sorted(filtered_indices, key=lambda i: sims[i], reverse=True)
 
         # Obtener los IDs de los documentos más relevantes
         most_relevant_doc_ids = [id_tf_documents[i][0] for i in sorted_sims_indices]
-        texts = [' '.join(controller.get_document_by_id(doc_id).split()[:40]) for doc_id in most_relevant_doc_ids]
+        print(f'{len(most_relevant_doc_ids)} ids: {most_relevant_doc_ids}')
+        texts = [' '.join(controller.get_document_by_id(doc_id)[0].split()[:40]) for doc_id in most_relevant_doc_ids]
         docs = [f'{doc_id},{text}' for doc_id, text in zip(most_relevant_doc_ids, texts)]
 
         return docs

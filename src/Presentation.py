@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class ClientNode(ChordNode):
     def __init__(self, ip: str, port: int = 8001):
-        self.id = getShaRepr(ip)
+        self.id = getShaRepr(ip, 256)
         self.ip = ip
         self.port = port
         self.ref = ChordNodeReference(self.ip, self.port)
@@ -50,21 +50,19 @@ class ClientNode(ChordNode):
 
     def search(self, query):
         self.check()
-        return self.connect._send_data(SEARCH_CLIENT, query)
+        return self.connect._send_data(SEARCH_CLIENT, query, size=32768)
     
     def get(self, id):
         self.check()
         return self.connect._send_data(GET_CLIENT, id)
 
     def insert(self, text):
-        logger.debug('check')
         self.check()
-        logger.debug('checked')
         self.connect._send_data(INSERT_CLIENT, text)
     
     def edit(self, id, text):
         self.check()
-        self.connect._send_data(EDIT_CLIENT, f'{id},{text}')
+        self.connect._send_data(EDIT_CLIENT, f'{id},{text}', size=32768)
     
     def remove(self, id):
         self.check()
@@ -97,11 +95,11 @@ class ClientNode(ChordNode):
                 t2.start()
 
     def join_CN(self, ip):
-        logger.debug(f'Broadcast: {self.ip}')
+        # logger.debug(f'Broadcast: {self.ip}')
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         s.sendto(f'{JOIN},{ip}'.encode(), (str(socket.INADDR_BROADCAST), 8003))
-        logger.debug(f'Broadcast end: {self.ip}')
+        # logger.debug(f'Broadcast end: {self.ip}')
         s.close()
 
 def index(client):
@@ -120,8 +118,3 @@ def index(client):
 )
 
     st.page_link("pages/Home.py", label="**Dis-Gle**", icon="📚")
-
-
-host_name = socket.gethostname() 
-ip = socket.gethostbyname(host_name)
-client = ClientNode(ip)

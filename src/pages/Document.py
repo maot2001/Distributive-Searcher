@@ -17,7 +17,7 @@ with st.form(key='search_form'):
 
 if submit_button:
     st.session_state.query = query
-    st.page_link("pages/Query.py", label="GO")
+    st.switch_page("pages/Query.py")
 
 edit_text = st.text_input(doc[1])
 if st.button('Editar'):
