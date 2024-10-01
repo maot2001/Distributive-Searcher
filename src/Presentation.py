@@ -1,8 +1,10 @@
+#import json
 import socket
 import time
 import streamlit as st
 import threading
 from streamlit.runtime.scriptrunner import add_script_run_ctx
+#import matplotlib.pyplot as plt
 
 from DHT.chord import ChordNode, ChordNodeReference, getShaRepr
 
@@ -118,3 +120,50 @@ def index(client):
 )
 
     st.page_link("pages/Home.py", label="**Dis-Gle**", icon="📚")
+
+    """x = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+
+    with open('local_db/metrics.json', 'r', encoding='utf-8') as f:
+        metrics = json.load(f)
+
+    precision = [float(i) for i in metrics['precision']]
+    recall = [float(i) for i in metrics['recall']]
+    f_measure = [float(i) for i in metrics['f_measure']]
+    r_precision = [float(i) for i in metrics['r_precision']]
+    failure_ratio = [float(i) for i in metrics['failure_ratio']]
+    time = [float(i) for i in metrics['time']]
+
+    fig, (ax1, ax2, ax3, ax4, ax5, ax6) = plt.subplots(6, 1, figsize=(10, 18))
+
+    ax1.plot(x, precision)
+    ax1.set_title('Precisión')
+    ax1.set_xlabel('Nodos')
+    ax1.set_ylim(0.2, 0.28)
+
+    ax2.plot(x, recall)
+    ax2.set_title('Recobrado')
+    ax2.set_xlabel('Nodos')
+    ax2.set_ylim(0.29, 0.37)
+
+    ax3.plot(x, f_measure)
+    ax3.set_title('F-Metrica')
+    ax3.set_xlabel('Nodos')
+    ax3.set_ylim(0.21, 0.25)
+
+    ax4.plot(x, r_precision)
+    ax4.set_title('R-Precisión')
+    ax4.set_xlabel('Nodos')
+    ax4.set_ylim(0.13, 0.23)
+
+    ax5.plot(x, failure_ratio)
+    ax5.set_title('Radio de Falla')
+    ax5.set_xlabel('Nodos')
+    ax5.set_ylim(0.003, 0.007)
+
+    ax6.plot(x, time)
+    ax6.set_title('Tiempo')
+    ax6.set_xlabel('Nodos')
+    ax6.set_ylim(0, 23)
+
+    fig.tight_layout()
+    st.pyplot(fig)"""
