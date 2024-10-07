@@ -34,7 +34,7 @@ class MetricNode(ClientNode):
         
         val = self.metrics()
         print(val)
-        results['precision'].append(val[0])
+        """results['precision'].append(val[0])
         results['recall'].append(val[1])
         results['f_measure'].append(val[2])
         results['r_precision'].append(val[3])
@@ -42,7 +42,7 @@ class MetricNode(ClientNode):
             
         results_json = json.dumps(results, indent=4, ensure_ascii=False)
         with open('src/local_db/metrics.json', 'w', encoding='utf-8') as file:
-            file.write(results_json)
+            file.write(results_json)"""
 
     def start_server(self):
 
@@ -61,6 +61,7 @@ class MetricNode(ClientNode):
     def metrics(self):
         thresh_metric = [[] for i in range(5)]
         for query in self.query:
+            if 'why does the compressibility transformation fail to correlate the' in self.query[query][0]: break
             responses = self.search(self.query[query][0])
             data = responses.decode().split('&&&')
             docs = []

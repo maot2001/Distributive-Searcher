@@ -1,10 +1,8 @@
-#import json
 import socket
 import time
 import streamlit as st
 import threading
 from streamlit.runtime.scriptrunner import add_script_run_ctx
-#import matplotlib.pyplot as plt
 
 from DHT.chord import ChordNode, ChordNodeReference, getShaRepr
 
@@ -166,4 +164,5 @@ def index(client):
     ax6.set_ylim(0, 23)
 
     fig.tight_layout()
-    st.pyplot(fig)"""
+    st.pyplot(fig)
+"""

@@ -1,7 +1,7 @@
 import sqlite3
 import os
 import json
-from joblib import load, dump
+from joblib import dump
 from gensim.corpora import Dictionary
 
 from database_controller.database_interface import Controller

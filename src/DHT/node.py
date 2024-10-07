@@ -61,6 +61,9 @@ SEARCH_CLIENT = 25
 
 SEARCH_SLAVE = 30
 GIVE_TIME = 31
+NEW_JOIN = 32
+OWNER = 33
+PING = 34
 
 def create_db(controller):
     connect = controller.connect()
@@ -105,8 +108,12 @@ class Node(ChordNode):
         self.is_leader = False
         self.leader_ip = leader_ip
         self.leader_port = leader_port
+        self.find_nodes = set([])
+        self.loading = False
         threading.Thread(target=self.start_server, daemon=True).start()  # Start server thread
         threading.Thread(target=self.recv_8003, daemon=True).start()
+        threading.Thread(target=self.rings_union, daemon=True).start()
+        threading.Thread(target=self.consistency, daemon=True).start()
 
     def time_assign(self, waiter = 22):
         self.waiter = waiter
@@ -129,6 +136,118 @@ class Node(ChordNode):
     
     def search(self, query):
         return self.model.retrieve(query, self.controller)
+    
+    def consistency(self):
+        while True:
+            try:
+                while self.loading:
+                    logger.debug('Consistency Loading...')
+                    time.sleep(10)
+
+                self.loading = True
+                logger.debug('Consistency Clear')
+
+                my_docs = self.get_docs('documentos')
+                pred_docs = self.get_docs('replica_pred')
+                succ_docs = self.get_docs('replica_succ')
+
+                for doc in my_docs:
+                    if self.pred:
+                        if not self._inbetween(doc[0] // 8192, self.pred.id, self.id):
+                            owner = self.find_succ(doc[0] // 8192)
+                            clock_copy1 = self.clock.send_event()
+                            owner._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy1) # Este paso asegura la replicación a ambos lados del vecino
+                            
+                            clock_copy2 = self.clock.send_event()
+                            self.ref._send_data(REMOVE, f'documentos,{doc[0]}', clock=clock_copy2)
+                        else:
+                            clock_copy1 = self.clock.send_event()
+                            self.succ._send_data(INSERT, f'replica_pred,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy1)
+                            
+                            clock_copy2 = self.clock.send_event()
+                            self.pred._send_data(INSERT, f'replica_succ,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy2)
+
+
+                for doc in pred_docs:
+                    if self.pred:
+                        clock_copy1 = self.clock.send_event()
+                        response = self.pred._send_data(OWNER, str(doc[0]), clock_copy1).decode()
+                        response = True if decode_response(response, split_char=',', char='¬')[0] == 'True' else False
+                        if not response:
+                            owner = self.find_succ(doc[0] // 8192)
+                            clock_copy2 = self.clock.send_event()
+                            owner._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy2) # Este paso asegura la replicación a ambos lados del vecino
+                            
+                            self.del_doc(doc[0], 'replica_pred')
+
+
+                for doc in succ_docs:
+                    clock_copy1 = self.clock.send_event()
+                    response = self.succ._send_data(OWNER, str(doc[0]), clock_copy1).decode()
+                    response = True if decode_response(response, split_char=',', char='¬')[0] == 'True' else False
+                    # logger.debug(f'\n\nto id {doc[0]} my succ {self.succ.id} has {response}\n\n')
+                    if not response:
+                            owner = self.find_succ(doc[0] // 8192)
+                            clock_copy2 = self.clock.send_event()
+                            owner._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy2) # Este paso asegura la replicación a ambos lados del vecino
+                            
+                            self.del_doc(doc[0], 'replica_succ')
+
+                self.loading = False
+                logger.debug('Consistency End')
+                time.sleep(60)
+
+            except:
+                self.loading = False
+                logger.debug('Consistency Failed')
+                time.sleep(60)
+
+    def rings_union(self):
+        while True:
+            if not self.e.InElection and self.e.ImTheLeader:
+
+                logger.debug('\n\nSending PING...\n\n')
+                self.ref._send_data_global(PING)
+                time.sleep(10)
+
+                logger.debug(f'\n\nIn Union {self.find_nodes}\n\n')
+                node = self
+                if self.ip in self.find_nodes: self.find_nodes.remove(self.ip)
+
+                while True:
+                    if node.succ.check_node() == b'':
+                        # logger.debug(f'\n\nnot founded {node.succ.ip}\n\n')
+                        if node.succ.ip in self.find_nodes: self.find_nodes.remove(node.succ.ip)
+                        time.sleep(15)
+                    else:
+                        node = node.succ
+                        break
+
+                while True:
+                    if node.check_node() == b'':
+                        # logger.debug(f'\n\nnot founded {node.ip}\n\n')
+                        break
+                    else:
+                        if node.ip in self.find_nodes: self.find_nodes.remove(node.ip)
+                        # logger.debug(f'\n\ndeleted {node.ip}\n\n')
+
+                        node = node.succ()[0]
+                        # logger.debug(f'\n\nchanged to {node.ip}\n\n')
+
+                    if node.ip == self.ip:
+                        # logger.debug('\n\nEnd Union\n\n')
+                        break
+
+                if len(self.find_nodes) > 0:
+                    logger.debug(f'\n\nStill Union {self.find_nodes}\n\n')
+                    losted = ChordNodeReference((self.find_nodes.pop()))
+                    losted._send_data(NEW_JOIN, str(self.ref))
+                        
+                self.find_nodes.clear()
+
+                logger.debug(f'\n\nComplete Union\n\n')
+            
+            time.sleep(30)
     
     def recv_8003(self):
         while True:
@@ -175,8 +294,8 @@ class Node(ChordNode):
             while time.time() - now < self.waiter:
                 try:
                     msg, _ = s.accept()
-                    data = msg.recv(32768).decode()
 
+                    data = msg.recv(32768).decode()
                     data = decode_response(data, split_char='$$$', char='¬')
 
                     clock_sent = data[-1]
@@ -195,7 +314,8 @@ class Node(ChordNode):
         if text == ',': return
         if op == SEARCH_SLAVE:
             text = text.split('$$$')
-            responses.extend(text)
+            for doc in text:
+                if not doc in responses: responses.append(doc)
     
     def data_receive(self, conn: socket, addr, data: list):
         data_resp = None 
@@ -217,15 +337,15 @@ class Node(ChordNode):
 
         if option == FIND_SUCCESSOR:
             id = int(data[1])
-            logger.debug(f'find successor to {id}')
+            # logger.debug(f'find successor to {id}')
             data_resp = self.find_succ(id)
-            logger.debug(f'successor to {id} is {data_resp}')
+            # logger.debug(f'successor to {id} is {data_resp}')
                     
         elif option == FIND_PREDECESSOR:
             id = int(data[1])
-            logger.debug(f'find predecessor to {id}')
+            # logger.debug(f'find predecessor to {id}')
             data_resp = self.find_pred(id)
-            logger.debug(f'predecessor to {id} is {data_resp}')
+            # logger.debug(f'predecessor to {id} is {data_resp}')
 
         elif option == GET_SUCCESSOR:
             data_resp = self.succ if self.succ else self.ref
@@ -258,63 +378,79 @@ class Node(ChordNode):
         elif option == JOIN and not self.included:
             self.included = True
             ip = data[2]
-            logger.debug(f'join to {ip}')
+            # logger.debug(f'join to {ip}')
             self.join(ChordNodeReference(ip, self.port))
 
+        elif option == NEW_JOIN:
+            ip = data[2]
+            logger.debug(f'new_join to {ip}')
+            self.join(ChordNodeReference(ip, self.port))
+
+        elif option == OWNER:
+            id = int(data[1])
+            doc = self.get_doc_by_id(id)
+            if not doc is None: data_resp = 'True'.encode()
+            else: data_resp = 'False'.encode()
+
+        elif option == PING:
+            # logger.debug(f'receiving PING from {addr[0]}')
+            self.find_nodes.add(addr[0])
+
         elif option == INSERT:
-            id = int(data[2])
-            
-            index = data.index("|||")
-            clock_for_doc = "[" +('\''.join(data[index+2:-2])).replace("\'",",") + "]"
-            text = ','.join(data[3:index])
-            send_flag = True
-            if data[1].startswith("documentos"):
-                table = 'documentos'
-                doc_in_bd = self.get_doc_by_id(id)
-                if not doc_in_bd: # Revisa si esta en la base de datos
-                    self.add_doc(id, text, clock_for_doc, table) 
-                else: 
-                    clock_in_bd = doc_in_bd[1]
-                    if CompareClocks(clock_in_bd,clock_in_bd): # Revisa si el documento guardado en la base de datos es el más reciente
-                        send_flag = False # no lo replica se trata de una versión antigua
+                id = int(data[2])
+                
+                index = data.index("|||")
+                clock_for_doc = "[" +('\''.join(data[index+2:-2])).replace("\'",",") + "]"
+                text = ','.join(data[3:index])
+                send_flag = True
+                if data[1].startswith("documentos"):
+                    table = 'documentos'
+                    doc_in_bd = self.get_doc_by_id(id)
+                    if not doc_in_bd: # Revisa si esta en la base de datos
+                        self.add_doc(id, text, clock_for_doc, table) 
                     else: 
-                        self.add_doc(id, text, clock_for_doc, table)
-                if send_flag:
-                    clock_copy = self.clock.send_event()
-                    if data[1][len("documentos"):] == "S":
-                        if self.pred:
-                            self.pred._send_data(INSERT, f'replica_succ,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
-                    elif data[1][len("documentos"):] == "P":
-                        self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
-                    else:
-                        if self.pred:
-                            self.pred._send_data(INSERT, f'replica_succ,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
-                        self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
-            else: # El documento se guarda en una de las réplicas 
-                if data[1].startswith("replica_succ"):
-                    doc_in_bd = self.get_doc_by_id(id,"replica_succ")
-                    table = 'replica_succ'
-                    if not doc_in_bd: # Devolvió None
-                        self.add_doc(id,  text, clock_for_doc, table)
-                    else:
                         clock_in_bd = doc_in_bd[1]
-                        if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
-                            self.add_doc(id,  text, clock_for_doc, table)
+                        if CompareClocks(clock_in_bd,clock_in_bd): # Revisa si el documento guardado en la base de datos es el más reciente
+                            send_flag = False # no lo replica se trata de una versión antigua
+                        else: 
+                            self.add_doc(id, text, clock_for_doc, table)
+                    if send_flag:
+                        clock_copy = self.clock.send_event()
+                        if data[1][len("documentos"):] == "S":
                             if self.pred:
-                                clock_copy = self.clock.send_event()
-                                self.pred._send_data(INSERT, f'documentosS,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
-                else:
-                    doc_in_bd = self.get_doc_by_id(id,"replica_pred")
-                    table = 'replica_pred'
-                    if not doc_in_bd: # Devolvió None
-                        self.add_doc(id,  text, clock_for_doc, table)
-                    else:
-                        clock_in_bd = doc_in_bd[1]
-                        if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
+                                self.pred._send_data(INSERT, f'replica_succ,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
+                        elif data[1][len("documentos"):] == "P":
+                            self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
+                        else:
+                            if self.pred:
+                                self.pred._send_data(INSERT, f'replica_succ,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
+                            self.succ._send_data(INSERT, f'replica_pred,{id},{text},|||,{clock_for_doc},|||', clock =clock_copy)
+                else: # El documento se guarda en una de las réplicas 
+                    if data[1].startswith("replica_succ"):
+                        doc_in_bd = self.get_doc_by_id(id,"replica_succ")
+                        table = 'replica_succ'
+                        if not doc_in_bd: # Devolvió None
                             self.add_doc(id,  text, clock_for_doc, table)
-                            clock_copy = self.clock.send_event()
-                            self.succ._send_data(INSERT, f'documentosP,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
-        
+                        else:
+                            clock_in_bd = doc_in_bd[1]
+                            if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
+                                self.add_doc(id,  text, clock_for_doc, table)
+                                if self.pred:
+                                    clock_copy = self.clock.send_event()
+                                    self.pred._send_data(INSERT, f'documentosS,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
+                    else:
+                        doc_in_bd = self.get_doc_by_id(id,"replica_pred")
+                        table = 'replica_pred'
+                        if not doc_in_bd: # Devolvió None
+                            self.add_doc(id,  text, clock_for_doc, table)
+                        else:
+                            clock_in_bd = doc_in_bd[1]
+                            if not CompareClocks(clock_in_bd,clock_in_bd): # El documento que esta guardado es más viejo
+                                self.add_doc(id,  text, clock_for_doc, table)
+                                clock_copy = self.clock.send_event()
+                                self.succ._send_data(INSERT, f'documentosP,{id},{text},|||,{clock_for_doc},|||', clock=clock_copy)
+                
+
         elif option == GET:
             id = data[1]
             doc = self.get_doc_by_id(id)[0]
@@ -339,7 +475,6 @@ class Node(ChordNode):
             index = data.index("|||")
             clock_for_doc = ','.join(data[index+1:-1])
             text = ','.join(data[3:index]) 
-            logger.debug(f'id: {id}\nclock: {clock_for_doc}\ntext: {text}\ntable: {table}')
             self.upd_doc(id, clock_for_doc, text, table)
                     
             if table == 'documentos':
@@ -373,20 +508,16 @@ class Node(ChordNode):
         elif option == EDIT_CLIENT:
                 id = int(data[1])
                 text = ','.join(data[2:])
-                new_id = getShaRepr(','.join(data[2:min(len(data),6)]))
                 node = self.find_succ(id // 8192)
-                new_node = self.find_succ(new_id // 8192)
-                #logger.debug(f'id {id} change to {new_id}')
                 clock_copy = self.clock.send_event()
-                #node._send_data(REMOVE, f'documentos,{id}', clock=clock_copy)
-                #new_node._send_data(INSERT, f'documentos,{new_id},{text},|||,{clock_copy},|||', clock=clock_copy)
                 node._send_data(EDIT, f'documentos,{id},{text},|||,{clock_copy},|||',clock=clock_copy)
 
         elif option == SEARCH_CLIENT:
                 query = ','.join(data[1:])
-                logger.debug(f'\n\nsearch_client : {query}\n\n')
-                if 'what design factors can be used to control lift-drag ratios' in query:
-                    self.ref._send_data_global(GIVE_TIME)
+
+                """if 'what design factors can be used to control lift-drag ratios' in query:
+                    self.ref._send_data_global(GIVE_TIME)"""
+
                 responses = []
                 recv = threading.Thread(target=self.recv_query_responses, args=(responses,))
                 recv.start()
@@ -397,7 +528,7 @@ class Node(ChordNode):
                 data_resp = '&&&'.join(responses).encode()
 
         
-        if data_resp is not None and (option == GET_CLIENT or option == SEARCH_CLIENT or option == GET):
+        if data_resp is not None and (option == GET_CLIENT or option == SEARCH_CLIENT or option == GET or option == OWNER):
             conn.sendall(data_resp)
 
         elif data_resp:
@@ -421,17 +552,32 @@ class Node(ChordNode):
                 threading.Thread(target=self.data_receive, args=(conn, addr, data)).start()
       
     def notify(self, node: 'ChordNodeReference'):
-        super().notify(node)
-        self.check_docs()
-        if self.pred:
-            clock_copy = self.clock.send_event()
-            self.pred._send_data(CHECK_DOCKS, clock=clock_copy)
+        try:
+            while self.loading:
+                logger.debug('Notify Loading...')
+                time.sleep(10)
+
+            self.loading = True
+            logger.debug('Notify Clear')
+
+            super().notify(node)
+
+            self.check_docs()
+            if self.pred:
+                clock_copy = self.clock.send_event()
+                self.pred._send_data(CHECK_DOCKS, clock=clock_copy)
+
+            self.loading = False
+            logger.debug('Notify End')
+
+        except:
+            self.loading = False
+            logger.debug('Notify Failed')
     
     def get_docs_between(self, tables, min, max):
         return self.controller.get_docs_between(tables, min, max)
-
+    
     def check_docs(self):
-
         # toma sus documentos y las replicas de su predecesor
         my_docs = self.get_docs('documentos')
         pred_docs = self.get_docs('replica_pred')
@@ -505,3 +651,5 @@ class Node(ChordNode):
                 # si el id esta entre su nuevo sucesor y el, o sea le pertenece al nuevo sucesor
                 clock_copy3 = self.clock.send_event()
                 self.succ._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy3)
+
+
