@@ -29,7 +29,7 @@ JOIN = 11
 NOTIFY_PRED = 12
 SEARCH_SLAVE = 30
 GIVE_TIME = 31
-
+SET_PRE_PRED = 32
 # Function to hash a string using SHA-1 and return its integer representation
 def getShaRepr(data: str, max_value: int = 2097152):
     # Genera el hash SHA-1 y obtén su representación en hexadecimal
@@ -147,8 +147,11 @@ class ChordNodeReference:
         return ChordNodeReference(response[1], self.port), response[-1]
 
     # Method to notify the current node about another node
-    def notify(self, node: 'ChordNodeReference', clock = b''):
-        self._send_data(NOTIFY, f'{node.id},{node.ip}', clock= clock)
+    def notify(self, node: 'ChordNodeReference', node_pred = '' ,clock = b''):
+        if node_pred == '':
+            self._send_data(NOTIFY, f'{node.id},{node.ip}', clock= clock)
+        else:
+            self._send_data(NOTIFY, f'{node.id},{node.ip},{node_pred}', clock= clock)
 
     def notify_pred(self, node: 'ChordNodeReference', clock = b''):
         self._send_data(NOTIFY_PRED, f'{node.id},{node.ip}', clock=clock)
@@ -190,6 +193,8 @@ class ChordNode:
         self.ref = ChordNodeReference(self.ip, self.port)
         self.succ = self.ref  # Initial successor is itself
         self.pred = None  # Initially no predecessor
+        self.pre_pred = None
+        self.pre_pred_aux = None
         self.m = m  # Number of bits in the hash/key space
         self.clock = VectorClock(256, self.id)
         self.finger = [self.ref] * self.m  # Finger table
@@ -234,21 +239,32 @@ class ChordNode:
             return node.succ
 
     # Method to find the predecessor of a given id
-    def find_pred(self, id: int, direction=True) -> 'ChordNodeReference':
+    def find_pred(self, id: int, direction=True, isCP = False) -> 'ChordNodeReference':
         node = self
+        aux = node
+
         if direction:
             while True:
                 if isinstance(node, ChordNodeReference):
                     clock_copy1 = self.clock.send_event()
                     x = node.succ(clock= clock_copy1)
                     if x == b'':
-                        return self.find_pred(id, False)
+                        if not isCP:
+                            return self.find_pred(id, False)
+                        else:
+                            node = aux
+                            break
+                    #logger.debug(f'\n ELSE!!! DIRECTION: {direction} node.id {node.id} and x.id{x[0].id} inbetween {self._inbetween(id, node.id, x[0].id)} !!! \n')
                     if not self._inbetween(id, node.id, x[0].id):
+                        aux = node
                         node = x[0]
                     else: break
+                    continue
                 if not isinstance(node, ChordNodeReference) and not self._inbetween(id, node.id, node.succ.id): # nodo sigue siendo self
                     node = node.succ
-                else: break
+                else: 
+                    #logger.debug(f'\n ELSE!!! DIRECTION: {direction} node {node}!!! \n')
+                    break
         else:
             while True:
                 if isinstance(node, ChordNodeReference):
@@ -259,9 +275,13 @@ class ChordNode:
                     if not self._inbetween(id, y[0].id, node.id):
                         node = y[0]
                     else: break
+                    continue
                 if not isinstance(node, ChordNodeReference) and not self._inbetween(id, node.pred.id, node.id):  # nodo sigue siendo self
                     node = node.pred
-                else: break
+                else:
+                    #logger.debug(f'\n ELSE!!! DIRECTION: {direction} node {node}!!! \n') 
+                    break
+        #logger.debug(f'\n ALARMA!!! nodo pred {node}!!! \n')
         return node
 
     # Method to find the closest preceding finger of a given id
@@ -306,16 +326,29 @@ class ChordNode:
                     self.clock.update(succ_answer[-1])
                     clock_copy2 = self.clock.send_event()
                     x = self.succ.pred(clock= clock_copy2)
-                    if x != b'' and x[0].id != self.id:
-                        clock_copy3 = x[-1]
-                        self.clock.update(clock_copy3)
-                        # logger.debug(x)
-                        if x[0] and self._inbetween(x[0].id, self.id, self.succ.id):
-                            self.succ = x[0]
-                        clock_copy4 = self.clock.send_event()
-                        self.succ.notify(self.ref, clock= clock_copy4)
+                    if x != b'':
+                        if x[0].id != self.id:
+                            clock_copy3 = x[-1]
+                            self.clock.update(clock_copy3)
+                            # logger.debug(x)
+                            if x[0] and self._inbetween(x[0].id, self.id, self.succ.id):
+                                self.succ = x[0]
+                            clock_copy4 = self.clock.send_event()
+                            self.succ.notify(self.ref, clock= clock_copy4)
 
-            logger.debug(f"my id: {self.id} successor: {self.succ} predecessor: {self.pred}")
+                        if self.pred and self.pred.id != self.succ.id:
+                            self.pre_pred_aux = self.pred
+                            clock_copy5 = self.clock.send_event()
+                            self.succ._send_data(SET_PRE_PRED,self.pred,clock_copy5)
+                        #elif self.pred and (not self.pre_pred_aux or self.pre_pred_aux.id !=  self.pred.id):
+                        #    self.pre_pred_aux = self.pred
+                        #    clock_copy5 = self.clock.send_event()
+                        #    self.succ._send_data(SET_PRE_PRED,self.pred,clock_copy5)
+
+                        
+                        
+
+            logger.debug(f"my id: {self.id} successor: {self.succ} predecessor: {self.pred} prepredecessor: {self.pre_pred} leader: {self.e.Leader}")
             time.sleep(10)
 
     # Notify method to inform the node about another node
@@ -332,6 +365,9 @@ class ChordNode:
                 self.succ.notify(self.ref, clock= clock_copy1)
         elif self._inbetween(node.id, self.pred.id, self.id):
             self.pred = node
+            #if self.pred.id != self.succ.id:
+            #    clock_copy2 = self.clock.send_event()
+            #    self.succ._send_data(SET_PRE_PRED,self.pred,clock_copy2)
 
     def notify_pred(self, node: 'ChordNodeReference'):
         # logger.debug(f'in notify_pred, my id: {self.id} my succ: {node.id}')
@@ -366,28 +402,58 @@ class ChordNode:
 
     # Check predecessor method to periodically verify if the predecessor is alive
     def check_predecessor(self):
+        
+        aux_node = None
         while True:
             if self.pred:
                 clock_copy1 = self.clock.send_event()
                 x = self.pred.check_node(clock_copy1)
                 if x == b'':
+                    aux = True
                     logger.debug('\n\n\n ALARMA!!! PREDECESOR PERDIDO!!! \n\n\n')
                     if self.election:
                         self.e.Leader = None
                         self.e.ImTheLeader = True
                         threading.Thread(target=self.e.loop, daemon=True).start()
-                    pred = self.find_pred(self.pred.id) # puede darse el caso que no encuentres nada
-                    self.pred = None
-                    clock_copy2 = self.clock.send_event()
-                    if isinstance(pred, ChordNodeReference):
+                    
+                    if self.pre_pred: # La red tiene al menos tres nodos 
+                        aux_node = self.pred.id
+                        pred = self.pre_pred
+                        self.pre_pred = None
+                        self.pred = None
+                        aux = False
+                        clock_copy2 = self.clock.send_event()
                         pred.notify_pred(self.ref, clock=clock_copy2)
-                    else:
-                        pred.notify_pred(self.ref)
+                        
+                        time.sleep(2)
+                    if not self.pred: # El predecesor de mi predecesor desaparecio 
+                        pred = self.find_pred(aux_node, isCP=True) # puede darse el caso que no encuentres nada
+                        clock_copy3 = self.clock.send_event()
+                        if isinstance(pred, ChordNodeReference):
+                            pred.notify_pred(self.ref, clock=clock_copy3)
+                        else:
+                            pred.notify_pred(self.ref)
+                        continue
+
+                    if aux:
+                        
+                        pred = self.find_pred(self.pred.id, isCP=True) # puede darse el caso que no encuentres nada
+                        self.pred = None
+                        clock_copy3 = self.clock.send_event()
+                        if isinstance(pred, ChordNodeReference):
+                            pred.notify_pred(self.ref, clock=clock_copy3)
+                        else:
+                            pred.notify_pred(self.ref)
+                        continue
+                    
                 else:
                     #logger.debug(f"HolaCP self.pred.cn = {x}")
                     clock_sent = x[-1]
                     self.clock.update(clock_sent)
+                    if self.pre_pred and self.pred.id == self.succ.id:
+                        self.pre_pred = None
                 time.sleep(10)
+            
 
     # Store key method to store a key-value pair and replicate to the successor
     def store_key(self, key: str, value: str):

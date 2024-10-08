@@ -1,6 +1,6 @@
 import socket, threading, time
 import logging
-
+import hashlib
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(threadName)s - %(message)s')
 
@@ -13,6 +13,24 @@ ID = str(socket.gethostbyname(socket.gethostname()))
 OK = 2
 ELECTION = 1
 WINNER = 3
+
+# Function to hash a string using SHA-1 and return its integer representation
+def getShaRepr(data: str, max_value: int = 2097152):
+    # Genera el hash SHA-1 y obtén su representación en hexadecimal
+    hash_hex = hashlib.sha1(data.encode()).hexdigest()
+    
+    # Convierte el hash hexadecimal a un entero
+    hash_int = int(hash_hex, 16)
+    
+    # Define un arreglo o lista con los valores del 0 al 16
+    values = list(range(max_value + 1))
+    
+    # Usa el hash como índice para seleccionar un valor del arreglo
+    # Asegúrate de que el índice esté dentro del rango válido
+    index = hash_int % len(values)
+    
+    # Devuelve el valor seleccionado
+    return values[index]
 
 def broadcast_call(message: str, port: str):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -33,7 +51,7 @@ class BullyBroadcastElector:
         self.InElectionSwap = False
 
     def bully(self, id: str, otherId: str):
-        return int(id.split('.')[-1]) > int(otherId.split('.')[-1])
+        return getShaRepr(id, 256) > getShaRepr(otherId, 256)
 
     def election_call(self):
         t = threading.Thread(target=broadcast_call,args=(f'{ELECTION}', self.port))
