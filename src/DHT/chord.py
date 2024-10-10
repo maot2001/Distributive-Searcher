@@ -497,6 +497,10 @@ class ChordNode:
                             s.sendall(f'{JOIN},{self.ref},¬{clock_copy1}'.encode('utf-8')) #*Reloj
                     except Exception as e:
                         logger.debug(f"Error in JOIN: {e}")
+                    if not self.pred and self.succ.id == self.id:
+                        time.sleep(2)
+                        if not self.pred:
+                            self.join_CN()
 
             elif option == SEARCH:
                 try:
