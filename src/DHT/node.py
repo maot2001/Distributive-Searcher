@@ -61,8 +61,10 @@ SEARCH_CLIENT = 25
 
 SEARCH_SLAVE = 30
 GIVE_TIME = 31
-SET_PRE_PRED = 32
+NEW_JOIN = 32
 OWNER = 33
+PING = 34
+SET_PRE_PRED = 35
 def create_db(controller):
     connect = controller.connect()
     
@@ -104,10 +106,13 @@ class Node(ChordNode):
         create_db(self.controller)
         self.loading = False
         self.is_leader = False
+        self.find_nodes = set([])
         self.leader_ip = leader_ip
+
         self.leader_port = leader_port
         threading.Thread(target=self.start_server, daemon=True).start()  # Start server thread
         threading.Thread(target=self.recv_8003, daemon=True).start()
+        threading.Thread(target=self.rings_union, daemon=True).start()
         threading.Thread(target=self.consistency, daemon=True).start()
     def time_assign(self, waiter = 22):
         self.waiter = waiter
@@ -170,32 +175,103 @@ class Node(ChordNode):
                         response = True if decode_response(response, split_char=',', char='¬')[0] == 'True' else False
                         if not response:
                             owner = self.find_succ(doc[0] // 8192)
-                            clock_copy2 = self.clock.send_event()
-                            owner._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy2) # Este paso asegura la replicación a ambos lados del vecino
-                            
-                            self.del_doc(doc[0], 'replica_pred')
+                            if owner.id != self.id:
+                                clock_copy2 = self.clock.send_event()
+                                owner._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy2) # Este paso asegura la replicación a ambos lados del vecino
+
+                                self.del_doc(doc[0], 'replica_pred')
 
 
                 for doc in succ_docs:
                     clock_copy1 = self.clock.send_event()
-                    response = self.succ._send_data(OWNER, str(doc[0]), clock_copy1).decode()
-                    response = True if decode_response(response, split_char=',', char='¬')[0] == 'True' else False
-                    # logger.debug(f'\n\nto id {doc[0]} my succ {self.succ.id} has {response}\n\n')
-                    if not response:
-                            owner = self.find_succ(doc[0] // 8192)
-                            clock_copy2 = self.clock.send_event()
-                            owner._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy2) # Este paso asegura la replicación a ambos lados del vecino
-                            
-                            self.del_doc(doc[0], 'replica_succ')
+                    if self.succ.id != self.id:
+                        response = self.succ._send_data(OWNER, str(doc[0]), clock_copy1).decode()
+                        response = True if decode_response(response, split_char=',', char='¬')[0] == 'True' else False
+                        # logger.debug(f'\n\nto id {doc[0]} my succ {self.succ.id} has {response}\n\n')
+                        if not response:
+                                owner = self.find_succ(doc[0] // 8192)
+                                if owner.id != self.id:
+                                    clock_copy2 = self.clock.send_event()
+                                    owner._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy2) # Este paso asegura la replicación a ambos lados del vecino
+
+                                    self.del_doc(doc[0], 'replica_succ')
 
                 self.loading = False
                 logger.debug('Consistency End')
-                time.sleep(60)
+                time.sleep(50)
 
             except:
                 self.loading = False
                 logger.debug('Consistency Failed')
-                time.sleep(60)
+                time.sleep(50)
+
+    def rings_union(self):
+        while True:
+            logger.debug(f'\n\n Rings_union... {not self.e.InElection} and {self.e.ImTheLeader}\n\n')
+            if not self.e.InElection and self.e.ImTheLeader:
+
+                logger.debug('\n\nSending PING...\n\n')
+                self.ref._send_data_global(PING)
+                time.sleep(10)
+                logger.debug('\n\nEnd Sending PING...\n\n')
+                logger.debug(f'\n\nIn Union {self.find_nodes}\n\n')
+                node = self
+                if self.ip in self.find_nodes: self.find_nodes.remove(self.ip)
+
+                while True:
+                    #logger.debug(f'\n\nPrimer While \n\n')
+                    #logger.debug(f'\n\n node {node.id} \n\n')
+                    if node.succ.check_node() == b'':
+                        # logger.debug(f'\n\nnot founded {node.succ.ip}\n\n')
+                        if node.succ.ip in self.find_nodes: self.find_nodes.remove(node.succ.ip)
+                        time.sleep(15)
+                    else:
+                        node = node.succ
+                        break
+                #logger.debug(f'\n\nSegundo While \n\n')
+                aux_node = node
+                while True:
+                    
+                    #logger.debug(f'\n\n node {node.id} \n\n')
+                    if node.check_node() == b'': # EL 
+                        #logger.debug(f'\n\nnot founded {node.ip}\n\n')
+                        self.find_nodes.add(aux_node.ip)
+                        break
+                    else:
+                        if node.ip in self.find_nodes: 
+                            node_succ = node.succ()[0]
+                            if node_succ.id != node.id: # El nodo tiene de referencia como su sucesor un nodo distinto a el mismo
+                                self.find_nodes.remove(node.ip)
+
+                                aux_node = node
+                                node = node_succ
+
+                                if node.ip == self.ip: # Se completo el recorrido por el anillo del nodo self
+                                    # logger.debug('\n\nEnd Union\n\n')
+                                    break
+                                continue
+                            else: #No tiene sucesor, hay que unirlo 
+                                break
+                        # logger.debug(f'\n\ndeleted {node.ip}\n\n')
+                        aux_node = node
+                        node = node.succ()[0]
+                        # logger.debug(f'\n\nchanged to {node.ip}\n\n')
+
+                    if node.ip == self.ip:
+                        # logger.debug('\n\nEnd Union\n\n')
+                        break
+                #logger.debug(f"\n \n apunto de buscar a los perdidos \n \n")
+                if len(self.find_nodes) > 0:
+                    logger.debug(f'\n\nStill Union {self.find_nodes}\n\n')
+                    losted = ChordNodeReference((self.find_nodes.pop()))
+
+                    losted._send_data(NEW_JOIN, str(self.ref))
+                        
+                self.find_nodes.clear()
+
+                logger.debug(f'\n\nComplete Union\n\n')
+            
+            time.sleep(30)
     
     def recv_8003(self):
         while True:
@@ -328,11 +404,21 @@ class Node(ChordNode):
             ip = data[2]
             self.join(ChordNodeReference(ip, self.port))
 
+        elif option == NEW_JOIN:
+            logger.debug(f"Hi NEW_JOIN {data}")
+            ip = data[2]
+            logger.debug(f'new_join to {ip}')
+            self.join(ChordNodeReference(ip, self.port))
+
         elif option == OWNER:
             id = int(data[1])
             doc = self.get_doc_by_id(id)
             if not doc is None: data_resp = 'True'.encode()
             else: data_resp = 'False'.encode()
+
+        elif option == PING:
+            logger.debug(f'receiving PING from {addr[0]}')
+            self.find_nodes.add(addr[0])
 
         elif option == INSERT:
             id = int(data[2])
@@ -591,7 +677,7 @@ class Node(ChordNode):
                 self.succ._send_data(INSERT, f'documentos,{doc[0]},{doc[1]},|||,{doc[2]},|||', clock=clock_copy3)
 
     def check_docs_aux(self):
-        logger.debug(f"Hi desde check-aux succ{self.succ} and pred {self.pred} and pp {self.pre_pred}")
+        #logger.debug(f"Hi desde check-aux succ{self.succ} and pred {self.pred} and pp {self.pre_pred}")
         succ_docs = self.get_docs('replica_succ')
         pred_docs = self.get_docs('replica_pred')
 

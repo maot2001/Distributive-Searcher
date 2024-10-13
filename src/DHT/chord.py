@@ -29,7 +29,10 @@ JOIN = 11
 NOTIFY_PRED = 12
 SEARCH_SLAVE = 30
 GIVE_TIME = 31
-SET_PRE_PRED = 32
+NEW_JOIN = 32
+OWNER = 33
+PING = 34
+SET_PRE_PRED = 35
 # Function to hash a string using SHA-1 and return its integer representation
 def getShaRepr(data: str, max_value: int = 2097152):
     # Genera el hash SHA-1 y obtén su representación en hexadecimal
@@ -95,6 +98,23 @@ class ChordNodeReference:
             return b''
         
     # Internal method to send data to all nodes
+    #def _send_data_global(self, op: int, data: str = None, clock = b'') -> list:
+    #    try:
+    #        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    #        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    #        if clock != b'':
+    #            s.sendto(f'{op},{data},¬{clock}'.encode(), (str(socket.INADDR_BROADCAST), PORT))
+    #        else:
+    #            s.sendto(f'{op},{data}'.encode(), (str(socket.INADDR_BROADCAST), PORT))
+    #        if op != SEARCH and op != GIVE_TIME:
+    #            response = s.recv(2048).decode()
+    #            response = decode_response(response, split_char=',', char="¬")
+    #        s.close()
+    #        if op != SEARCH and op != GIVE_TIME:
+    #            return response
+    #    except Exception as e:
+    #        return b''
+
     def _send_data_global(self, op: int, data: str = None, clock = b'') -> list:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -103,44 +123,40 @@ class ChordNodeReference:
                 s.sendto(f'{op},{data},¬{clock}'.encode(), (str(socket.INADDR_BROADCAST), PORT))
             else:
                 s.sendto(f'{op},{data}'.encode(), (str(socket.INADDR_BROADCAST), PORT))
-            if op != SEARCH and op != GIVE_TIME:
-                response = s.recv(2048).decode()
-                response = decode_response(response, split_char=',', char="¬")
             s.close()
-            if op != SEARCH and op != GIVE_TIME:
-                return response
         except Exception as e:
-            return b''
+            logger.debug(f"Error in SEND GLOBAL: {e}")
                
     # Method to find a chord network node to conect
-    def join(self, ref, clock = b'') -> list:
-        response = self._send_data_global(JOIN, ref, clock=clock)
-        response = decode_response(response, split_char=',', char='¬')
-        return response
+    def join(self, ref, clock = b'') -> None:
+        self._send_data_global(JOIN, ref, clock=clock)
+        """response = decode_response(response, split_char=',', char='¬')
+        logger.debug(f'in CNR join {response}')
+        return response"""
 
     # Method to find the successor of a given id
-    def find_successor(self, id: int, clock = b'') -> 'ChordNodeReference':
+    def find_successor(self, id: int, clock = b''):
         response = self._send_data(FIND_SUCCESSOR, str(id), clock=clock).decode()
         response = decode_response(response, split_char=',', char='¬')
         if response == b'': return response
         return ChordNodeReference(response[1], self.port), response[-1]
 
     # Method to find the predecessor of a given id
-    def find_predecessor(self, id: int, clock = b'') -> 'ChordNodeReference':
+    def find_predecessor(self, id: int, clock = b''):
         response = self._send_data(FIND_PREDECESSOR, str(id), clock=clock).decode()
         response = decode_response(response, split_char=',', char='¬')
         if response == b'': return response
         return ChordNodeReference(response[1], self.port), response[-1]
 
     # Property to get the successor of the current node
-    def succ(self, clock = b'') -> 'ChordNodeReference':
+    def succ(self, clock = b''):
         response = self._send_data(GET_SUCCESSOR, clock=clock).decode()
         response = decode_response(response, split_char=',', char='¬')
         if response == b'': return response
         return ChordNodeReference(response[1], self.port), response[-1]
 
     # Property to get the predecessor of the current node
-    def pred(self, clock = b'') -> 'ChordNodeReference':
+    def pred(self, clock = b''):
         response = self._send_data(GET_PREDECESSOR, clock=clock).decode()
         response = decode_response(response, split_char=',', char='¬')
         if response == b'': return response
@@ -299,7 +315,10 @@ class ChordNode:
             clock_copy1 = self.clock.send_event()
             x = node.find_successor(self.id, clock=clock_copy1) # ? Si se cae hacer un nuevo broadcast
             if x != b'': # todo ver como se hace para volver a entrar en la red una vez que se caiga tu vecino
-                self.succ = x[0] 
+                if x[0].id == self.id:
+                    self.succ = node 
+                else:
+                    self.succ = x[0] 
                 clock_sent = x[-1]
                 self.clock.update(clock_sent)
                 clock_copy2 = self.clock.send_event()
@@ -311,9 +330,10 @@ class ChordNode:
     # Method to join a Chord network without 'node' reference as an entry point      
     def join_CN(self):
         clock_copy1 = self.clock.send_event()
-        msg = self.ref.join(self.ref, clock=clock_copy1)
+        self.ref.join(self.ref, clock=clock_copy1)
+        """logger.debug(f'in join_CN {msg}')
         self.clock.update(msg[-1]) # ! Me parece que nunca llegara esta respuesta ¿afecta?
-        return self.join(ChordNodeReference(msg[2], PORT))
+        return self.join(ChordNodeReference(msg[2], PORT))"""
     
     # Stabilize method to periodically verify and update the successor and predecessor
     def stabilize(self):
@@ -528,5 +548,14 @@ class ChordNode:
             elif option == GIVE_TIME:
                 logger.debug(f'\n\n\nMy worst time is {self.time}\n\n\n')
                 self.time = 0
+
+            elif option == PING:
+                try:
+                    response = f"{PING}".encode()
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.connect((addr[0], 8001))
+                        s.sendall(response)
+                except Exception as e:
+                    logger.debug(f'Error in PING: {e}')
 
             s.close()
