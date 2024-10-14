@@ -217,11 +217,15 @@ class Node(ChordNode):
 
         if option == FIND_SUCCESSOR:
             id = int(data[1])
+            logger.debug(f'find successor to {id}')
             data_resp = self.find_succ(id)
+            logger.debug(f'successor to {id} is {data_resp}')
                     
         elif option == FIND_PREDECESSOR:
             id = int(data[1])
+            logger.debug(f'find predecessor to {id}')
             data_resp = self.find_pred(id)
+            logger.debug(f'predecessor to {id} is {data_resp}')
 
         elif option == GET_SUCCESSOR:
             data_resp = self.succ if self.succ else self.ref
@@ -254,6 +258,7 @@ class Node(ChordNode):
         elif option == JOIN and not self.included:
             self.included = True
             ip = data[2]
+            logger.debug(f'join to {ip}')
             self.join(ChordNodeReference(ip, self.port))
 
         elif option == INSERT:
@@ -368,9 +373,13 @@ class Node(ChordNode):
         elif option == EDIT_CLIENT:
                 id = int(data[1])
                 text = ','.join(data[2:])
+                new_id = getShaRepr(','.join(data[2:min(len(data),6)]))
                 node = self.find_succ(id // 8192)
+                new_node = self.find_succ(new_id // 8192)
+                #logger.debug(f'id {id} change to {new_id}')
                 clock_copy = self.clock.send_event()
-                logger.debug(f'edit client {text}')
+                #node._send_data(REMOVE, f'documentos,{id}', clock=clock_copy)
+                #new_node._send_data(INSERT, f'documentos,{new_id},{text},|||,{clock_copy},|||', clock=clock_copy)
                 node._send_data(EDIT, f'documentos,{id},{text},|||,{clock_copy},|||',clock=clock_copy)
 
         elif option == SEARCH_CLIENT:
@@ -429,7 +438,7 @@ class Node(ChordNode):
 
         for doc in my_docs:
             # si el id NO esta entre su nuevo predecesor y el, o sea le pertenece a su predecesor
-            if not self._inbetween(doc[0] // 8192, self.pred.id, self.id):
+            if self.pred and not self._inbetween(doc[0] // 8192, self.pred.id, self.id):
                 
                 # le dice que lo inserte en sus documentos
                 clock_copy1 = self.clock.send_event()
@@ -449,7 +458,7 @@ class Node(ChordNode):
         
         for doc in pred_docs:
             # si el id NO esta entre su nuevo predecesor y el, o sea le pertenece al antiguo predecesor
-            if not self._inbetween(doc[0] // 8192, self.pred.id, self.id):
+            if self.pred and not self._inbetween(doc[0] // 8192, self.pred.id, self.id):
                 
                 # lo elimina porque cambio su predecesor
                 self.del_doc(doc[0], 'replica_pred')

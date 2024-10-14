@@ -42,7 +42,7 @@ class InsertNode(ClientNode):
 
         change = {}
         for doc in dataset:
-            if int(doc) > 19: break
+            #if int(doc) > 19: break
             if int(doc) % 100 == 0: print(doc)
             self.insert(dataset[doc])
             text = dataset[doc].split(',')
